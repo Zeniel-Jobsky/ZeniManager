@@ -1,0 +1,272 @@
+/**
+ * DashboardLayout - 고정 사이드바 + 상단 헤더 레이아웃
+ * Design: 모던 웰니스 미니멀리즘
+ * Primary: #009C64 | Background: #F0EEE9
+ */
+import { useState } from 'react';
+import { Link, useLocation } from 'wouter';
+import { isAdminRole } from '@shared/const';
+import { useAuth } from '@/contexts/AuthContext';
+import {
+  LayoutDashboard,
+  Users,
+  UserPlus,
+  Calendar,
+  StickyNote,
+  Settings,
+  LogOut,
+  ChevronDown,
+  ChevronRight,
+  Menu,
+  X,
+  Building2,
+  BarChart3,
+  UserCog,
+  Bell,
+} from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { toast } from 'sonner';
+
+interface NavItem {
+  label: string;
+  path?: string;
+  icon: React.ReactNode;
+  children?: NavItem[];
+}
+
+const counselorNav: NavItem[] = [
+  {
+    label: '업무 대시보드',
+    icon: <LayoutDashboard size={17} />,
+    children: [
+      { label: '전체 상담자 수', path: '/dashboard', icon: <ChevronRight size={14} /> },
+      { label: '상담자 검색', path: '/dashboard/search', icon: <ChevronRight size={14} /> },
+      { label: '프로세스 현황', path: '/dashboard/process', icon: <ChevronRight size={14} /> },
+      { label: '캘린더', path: '/dashboard/calendar', icon: <ChevronRight size={14} /> },
+      { label: '메모장', path: '/dashboard/memo', icon: <ChevronRight size={14} /> },
+    ],
+  },
+  {
+    label: '상담자 목록',
+    icon: <Users size={17} />,
+    children: [
+      { label: '상담자 검색', path: '/clients', icon: <ChevronRight size={14} /> },
+      { label: '상담자 목록', path: '/clients/list', icon: <ChevronRight size={14} /> },
+      { label: '상담자 등록', path: '/clients/register', icon: <ChevronRight size={14} /> },
+    ],
+  },
+];
+
+const adminNav: NavItem[] = [
+  {
+    label: '사업 대시보드',
+    icon: <Building2 size={17} />,
+    children: [
+      { label: '지점별 현황', path: '/admin/dashboard', icon: <ChevronRight size={14} /> },
+      { label: '사업별(유형)', path: '/admin/dashboard/business', icon: <ChevronRight size={14} /> },
+      { label: '취업구분(성사율)', path: '/admin/dashboard/employment', icon: <ChevronRight size={14} /> },
+    ],
+  },
+  {
+    label: '상담사 목록',
+    path: '/admin/counselors',
+    icon: <UserCog size={17} />,
+  },
+  {
+    label: '상담자 목록',
+    path: '/admin/clients',
+    icon: <Users size={17} />,
+  },
+];
+
+function NavGroup({ item, depth = 0 }: { item: NavItem; depth?: number }) {
+  const [location] = useLocation();
+  const [open, setOpen] = useState(() => {
+    if (!item.children) return false;
+    return item.children.some(child => child.path === location || child.children?.some(c => c.path === location));
+  });
+
+  const isActive = item.path === location;
+  const hasChildren = item.children && item.children.length > 0;
+
+  if (!hasChildren && item.path) {
+    return (
+      <Link href={item.path}>
+        <div className={`sidebar-item ${isActive ? 'sidebar-item-active' : ''}`} style={{ paddingLeft: `${16 + depth * 16}px` }}>
+          <span className="flex-shrink-0 opacity-70">{item.icon}</span>
+          <span>{item.label}</span>
+        </div>
+      </Link>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(!open)}
+        className="sidebar-item w-full"
+        style={{ paddingLeft: `${16 + depth * 16}px` }}
+      >
+        <span className="flex-shrink-0 opacity-70">{item.icon}</span>
+        <span className="flex-1 text-left">{item.label}</span>
+        <span className="transition-transform duration-200" style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+          <ChevronRight size={14} />
+        </span>
+      </button>
+      {open && item.children && (
+        <div className="mt-0.5">
+          {item.children.map((child, i) => (
+            <NavGroup key={i} item={child} depth={depth + 1} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface DashboardLayoutProps {
+  children: React.ReactNode;
+}
+
+export default function DashboardLayout({ children }: DashboardLayoutProps) {
+  const { user, logout } = useAuth();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const isAdmin = isAdminRole(user?.role);
+  const navItems = isAdmin ? adminNav : counselorNav;
+  const roleLabel = isAdmin ? '관리자' : '상담사';
+  const organizationLabel = user?.department || user?.branch;
+
+  const handleLogout = () => {
+    logout();
+    toast.success('로그아웃되었습니다.');
+  };
+
+  return (
+    <div className="flex h-screen overflow-hidden" style={{ background: 'oklch(0.958 0.008 75)' }}>
+      {/* Sidebar */}
+      <aside
+        className="flex flex-col flex-shrink-0 bg-card border-r border-border transition-all duration-200 overflow-hidden"
+        style={{ width: sidebarOpen ? '240px' : '0px', minWidth: sidebarOpen ? '240px' : '0px' }}
+      >
+        {/* Logo */}
+        <div className="flex items-center justify-center px-4 py-3 border-b border-border">
+          <img
+            src="https://d2xsxph8kpxj0f.cloudfront.net/310519663477530955/KJzdo2y2Lmf5RsBh2TqxqF/zeniel_d6e9bacb.png"
+            alt="ZENIEL"
+            className="h-9 object-contain"
+          />
+        </div>
+
+        {/* Role badge */}
+        <div className="px-4 py-2.5 border-b border-border">
+          <span className={isAdmin ? 'badge-pending' : 'badge-active'}>
+            {roleLabel}
+          </span>
+          {organizationLabel && (
+            <span className="ml-2 text-xs text-muted-foreground">{organizationLabel}</span>
+          )}
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto py-2">
+          {navItems.map((item, i) => (
+            <NavGroup key={i} item={item} />
+          ))}
+        </nav>
+
+        {/* Settings */}
+        <div className="border-t border-border py-2">
+          <Link href="/settings">
+            <div className="sidebar-item">
+              <Settings size={17} className="opacity-70" />
+              <span>설정</span>
+            </div>
+          </Link>
+          <button onClick={handleLogout} className="sidebar-item w-full text-left">
+            <LogOut size={17} className="opacity-70" />
+            <span>로그아웃</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* Main */}
+      <div className="flex flex-col flex-1 overflow-hidden">
+        {/* Top bar */}
+        <header className="flex items-center justify-between px-5 py-3 bg-card border-b border-border flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-1.5 rounded-sm hover:bg-muted transition-colors"
+            >
+              {sidebarOpen ? <X size={18} /> : <Menu size={18} />}
+            </button>
+            {!sidebarOpen && (
+              <img
+                src="https://d2xsxph8kpxj0f.cloudfront.net/310519663477530955/KJzdo2y2Lmf5RsBh2TqxqF/zeniel_d6e9bacb.png"
+                alt="ZENIEL"
+                className="h-7 object-contain"
+              />
+            )}
+            <div className="text-sm text-muted-foreground hidden sm:block">
+              {roleLabel} 포털
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button className="p-1.5 rounded-sm hover:bg-muted transition-colors relative">
+              <Bell size={18} />
+              <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full" style={{ background: 'oklch(0.577 0.245 27.325)' }}></span>
+            </button>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center gap-2 px-2 py-1.5 rounded-sm hover:bg-muted transition-colors">
+                  <Avatar className="w-7 h-7">
+                    <AvatarFallback className="text-xs font-medium text-white" style={{ background: 'oklch(0.588 0.152 162.5)' }}>
+                      {user?.name?.charAt(0) || 'U'}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="text-sm font-medium hidden sm:block">{user?.name}</span>
+                  <ChevronDown size={14} className="text-muted-foreground" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <div className="px-3 py-2">
+                  <div className="text-sm font-medium">{user?.name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {organizationLabel ? `${roleLabel} · ${organizationLabel}` : roleLabel}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{user?.email}</div>
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/settings">
+                    <Settings size={14} className="mr-2" />
+                    설정
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleLogout} className="text-destructive">
+                  <LogOut size={14} className="mr-2" />
+                  로그아웃
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </header>
+
+        {/* Content */}
+        <main className="flex-1 overflow-y-auto p-5 page-enter">
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+}
