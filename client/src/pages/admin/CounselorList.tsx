@@ -3,7 +3,7 @@
  * Data: Supabase API (mock fallback when not configured) & Electron IPC for Registration/Deletion
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { ROLE_ADMIN, ROLE_COUNSELOR, isAdminRole, type AppRole } from '@shared/const';
+import { ROLE_ADMIN, ROLE_COUNSELOR, isAdminRole, isEmploymentCompletedStage, type AppRole } from '@shared/const';
 import { Search, Plus, Edit3, Trash2, X, Loader2, RefreshCw, AlertTriangle, Eye, Target, Users, TrendingUp, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, Filter } from 'lucide-react';
 import { toast } from 'sonner';
 import { usePageGuard } from '@/hooks/usePageGuard';
@@ -55,7 +55,14 @@ function CounselorDetailModal({
   const [savingMemo, setSavingMemo] = useState(false);
 
   useEffect(() => {
-    fetchClients(counselor.user_id)
+    if (!counselor.counselor_id) {
+      setClients([]);
+      setLoading(false);
+      toast.error('이 계정과 연결된 상담사 식별자를 찾을 수 없습니다.');
+      return;
+    }
+
+    fetchClients(counselor.counselor_id)
       .then(data => {
         setClients(data);
         setLoading(false);
@@ -64,11 +71,11 @@ function CounselorDetailModal({
         toast.error('내담자 데이터를 불러오는데 실패했습니다.');
         setLoading(false);
       });
-  }, [counselor.user_id]);
+  }, [counselor.counselor_id]);
 
   const totalClients = clients.length; 
   // 🚨 에러 수정: employment_type 대신 hire_date(취업일자)가 있거나 단계가 취업완료인 경우로 변경
-  const completedClients = clients.filter(c => !!c.hire_date || c.participation_stage === '취업완료').length;
+  const completedClients = clients.filter(c => !!c.employment_date || isEmploymentCompletedStage(c.participation_stage)).length;
   const successRate = totalClients > 0 ? Math.round((completedClients / totalClients) * 100) : 0;
 
   const stageData = useMemo(() => {
@@ -406,9 +413,9 @@ export default function CounselorList() {
       ]);
 
       const enhancedCounselors = counselorsData.map(c => {
-        const myClients = allClientsData.filter(client => client.counselor_id === c.user_id);
+        const myClients = allClientsData.filter(client => client.counselor_id === c.counselor_id);
         // 🚨 에러 수정: employment_type 대신 hire_date(취업일자) 유무 및 participation_stage 사용
-        const completedCount = myClients.filter(client => !!client.hire_date || client.participation_stage === '취업완료').length;
+        const completedCount = myClients.filter(client => !!client.employment_date || isEmploymentCompletedStage(client.participation_stage)).length;
         
         return {
           ...c,
@@ -491,6 +498,7 @@ export default function CounselorList() {
       } else {
         const newC: CounselorRow = {
           user_id: `demo_${Date.now()}`,
+          counselor_id: null,
           ...form,
           role: 5,
           client_count: 0,

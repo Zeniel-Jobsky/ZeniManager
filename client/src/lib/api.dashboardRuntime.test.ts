@@ -64,7 +64,7 @@ function createQueryChain(
     count: result.count ?? null,
   };
 
-  ['eq', 'gte', 'lte', 'in', 'order', 'or', 'limit'].forEach(method => {
+  ['eq', 'gte', 'lte', 'in', 'order', 'or', 'limit', 'range'].forEach(method => {
     chain[method] = (...args: unknown[]) => {
       queryLog.push({ table, operation, method, args });
       return chain;
@@ -122,20 +122,21 @@ describe('dashboard runtime APIs', () => {
 
     await expect(fetchMyMemo('auth-1')).rejects.toThrow('개인 메모 기능을 사용하려면 Supabase 설정이 필요합니다.');
     await expect(updateMyMemo('auth-1', 'memo')).rejects.toThrow('개인 메모 기능을 사용하려면 Supabase 설정이 필요합니다.');
-    await expect(fetchDashboardCalendarMonthCounts('auth-1', '2026-03-01', '2026-03-31')).rejects.toThrow('캘린더 기능을 사용하려면 Supabase 설정이 필요합니다.');
-    await expect(fetchDashboardCalendarEntries('auth-1', '2026-03-01', '2026-03-31')).rejects.toThrow('캘린더 기능을 사용하려면 Supabase 설정이 필요합니다.');
+    await expect(fetchDashboardCalendarMonthCounts('counselor-1', '2026-03-01', '2026-03-31')).rejects.toThrow('캘린더 기능을 사용하려면 Supabase 설정이 필요합니다.');
+    await expect(fetchDashboardCalendarEntries('counselor-1', '2026-03-01', '2026-03-31')).rejects.toThrow('캘린더 기능을 사용하려면 Supabase 설정이 필요합니다.');
   });
 
   it('throws explicit errors when auth user id is missing', async () => {
-    await expect(fetchMyMemo('')).rejects.toThrow('개인 메모 기능을 호출하려면 로그인한 상담사 user_id가 필요합니다.');
-    await expect(updateMyMemo('   ', 'memo')).rejects.toThrow('개인 메모 기능을 호출하려면 로그인한 상담사 user_id가 필요합니다.');
-    await expect(fetchDashboardCalendarMonthCounts('', '2026-03-01', '2026-03-31')).rejects.toThrow('캘린더 기능을 호출하려면 로그인한 상담사 user_id가 필요합니다.');
-    await expect(fetchDashboardCalendarEntries('', '2026-03-01', '2026-03-31')).rejects.toThrow('캘린더 기능을 호출하려면 로그인한 상담사 user_id가 필요합니다.');
+    await expect(fetchMyMemo('')).rejects.toThrow('개인 메모 기능을 호출하려면 로그인한 사용자의 Auth UUID가 필요합니다.');
+    await expect(updateMyMemo('   ', 'memo')).rejects.toThrow('개인 메모 기능을 호출하려면 로그인한 사용자의 Auth UUID가 필요합니다.');
+    await expect(fetchDashboardStats('')).rejects.toThrow('대시보드 통계 기능을 호출하려면 public.counselors.id가 필요합니다.');
+    await expect(fetchDashboardCalendarMonthCounts('', '2026-03-01', '2026-03-31')).rejects.toThrow('캘린더 기능을 호출하려면 public.counselors.id가 필요합니다.');
+    await expect(fetchDashboardCalendarEntries('', '2026-03-01', '2026-03-31')).rejects.toThrow('캘린더 기능을 호출하려면 public.counselors.id가 필요합니다.');
   });
 
   it('validates calendar date ranges before querying', async () => {
-    await expect(fetchDashboardCalendarMonthCounts('auth-1', '2026-03-31', '2026-03-01')).rejects.toThrow('캘린더 기능을 호출하려면 시작일이 종료일보다 늦지 않은 조회 기간이 필요합니다.');
-    await expect(fetchDashboardCalendarEntries('auth-1', '2026/03/01', '2026-03-31')).rejects.toThrow('캘린더 기능을 호출하려면 YYYY-MM-DD 형식의 조회 기간이 필요합니다.');
+    await expect(fetchDashboardCalendarMonthCounts('counselor-1', '2026-03-31', '2026-03-01')).rejects.toThrow('캘린더 기능을 호출하려면 시작일이 종료일보다 늦지 않은 조회 기간이 필요합니다.');
+    await expect(fetchDashboardCalendarEntries('counselor-1', '2026/03/01', '2026-03-31')).rejects.toThrow('캘린더 기능을 호출하려면 YYYY-MM-DD 형식의 조회 기간이 필요합니다.');
   });
 
   it('returns null when the live memo row does not exist', async () => {
@@ -161,69 +162,77 @@ describe('dashboard runtime APIs', () => {
 
   it('returns empty month counts when there is no calendar history', async () => {
     supabaseState.client = createMockSupabaseClient({
-      counsel_history: {
+      sessions: {
         select: { data: [], error: null },
       },
     });
 
-    await expect(fetchDashboardCalendarMonthCounts('auth-1', '2026-03-01', '2026-03-31')).resolves.toEqual({});
+    await expect(fetchDashboardCalendarMonthCounts('counselor-1', '2026-03-01', '2026-03-31')).resolves.toEqual({});
   });
 
   it('filters calendar month counts through counselor-owned clients', async () => {
     const queryLog: QueryLogEntry[] = [];
     supabaseState.client = createMockSupabaseClient({
-      counsel_history: {
+      sessions: {
         select: {
           data: [
-            { client_id: 10, counsel_date: '2026-03-10' },
-            { client_id: 20, counsel_date: '2026-03-10' },
-            { client_id: 20, counsel_date: '2026-03-11' },
+            { client_id: '10', date: '2026-03-10' },
+            { client_id: '20', date: '2026-03-10' },
+            { client_id: '20', date: '2026-03-11' },
           ],
           error: null,
         },
       },
-      client: {
+      clients: {
         select: {
-          data: [{ client_id: 20 }],
+          data: [{ id: '20' }],
           error: null,
         },
       },
     }, queryLog);
 
-    const result = await fetchDashboardCalendarMonthCounts('auth-1', '2026-03-01', '2026-03-31');
+    const result = await fetchDashboardCalendarMonthCounts('counselor-1', '2026-03-01', '2026-03-31');
 
     expect(result).toEqual({
       '2026-03-10': 1,
       '2026-03-11': 1,
     });
+    // 소유권 필터는 앱 코드가 아니라 RLS(clients_select)가 담당하므로,
+    // 여기서는 세션에서 발견된 client_id들로 소유권 검증 조회가 나가는지만 확인한다.
     expect(queryLog).toContainEqual({
-      table: 'client',
+      table: 'clients',
       operation: 'select',
       method: 'eq',
-      args: ['counselor_id', 'auth-1'],
+      args: ['counselor_id', 'counselor-1'],
+    });
+    expect(queryLog).toContainEqual({
+      table: 'clients',
+      operation: 'select',
+      method: 'in',
+      args: ['id', ['10', '20']],
     });
   });
 
   it('filters calendar entries through counselor-owned clients', async () => {
     supabaseState.client = createMockSupabaseClient({
-      counsel_history: {
+      sessions: {
         select: {
           data: [
-            { counsel_id: 1, client_id: 10, counsel_date: '2026-03-10', start_time: '09:00:00', end_time: '10:00:00' },
-            { counsel_id: 2, client_id: 20, counsel_date: '2026-03-11', start_time: null, end_time: null },
+            { id: '1', client_id: '10', counselor_id: 'counselor-1', date: '2026-03-10' },
+            { id: '2', client_id: '20', counselor_id: 'counselor-1', date: '2026-03-11' },
           ],
           error: null,
         },
       },
-      client: {
+      clients: {
         select: {
-          data: [{ client_id: 20, client_name: '허용 고객', counselor_id: 'auth-1', participation_stage: '초기상담' }],
+          data: [{ id: '20', name: '허용 고객', counselor_id: 'counselor-1', participation_stage: '초기상담' }],
           error: null,
         },
       },
     });
 
-    await expect(fetchDashboardCalendarEntries('auth-1', '2026-03-01', '2026-03-31')).resolves.toEqual([
+    await expect(fetchDashboardCalendarEntries('counselor-1', '2026-03-01', '2026-03-31')).resolves.toEqual([
       {
         counselId: '2',
         clientId: '20',
@@ -238,20 +247,20 @@ describe('dashboard runtime APIs', () => {
 
   it('aggregates live monthly dashboard stats from sessions and unique clients only', async () => {
     supabaseState.client = createMockSupabaseClient({
-      counsel_history: {
+      sessions: {
         select: {
           data: [
-            { client_id: 10, counsel_date: '2026-02-05' },
-            { client_id: 10, counsel_date: '2026-03-10' },
-            { client_id: 20, counsel_date: '2026-03-11' },
-            { client_id: 20, counsel_date: '2026-03-20' },
+            { client_id: '10', date: '2026-02-05' },
+            { client_id: '10', date: '2026-03-10' },
+            { client_id: '20', date: '2026-03-11' },
+            { client_id: '20', date: '2026-03-20' },
           ],
           error: null,
         },
       },
     });
 
-    const result = await fetchDashboardMonthlyStats('auth-1');
+    const result = await fetchDashboardMonthlyStats('counselor-1');
 
     expect(result).toHaveLength(12);
     expect(result.at(-2)).toEqual({ month: '2월', clients: 1, sessions: 1 });
@@ -260,25 +269,25 @@ describe('dashboard runtime APIs', () => {
 
   it('aggregates score KPIs, score-range distribution, and follow-up counts from live dashboard stats', async () => {
     supabaseState.client = createMockSupabaseClient({
-      client: {
+      clients: {
         select: {
           data: [
-            { participation_stage: '초기상담', retest_stat: null, continue_serv_1_stat: null },
-            { participation_stage: '취업지원', retest_stat: 65, continue_serv_1_stat: 0 },
-            { participation_stage: '취업완료', retest_stat: 72, continue_serv_1_stat: 1 },
-            { participation_stage: '취업완료', retest_stat: 88, continue_serv_1_stat: 0 },
-            { participation_stage: '사후관리', retest_stat: 91, continue_serv_1_stat: 2 },
+            { participation_stage: '초기상담', score: null, retention_1m_yn: null },
+            { participation_stage: '취업지원', score: 65, retention_1m_yn: null },
+            { participation_stage: '취업완료', score: 72, retention_1m_yn: 'Y' },
+            { participation_stage: '취업완료', score: 88, retention_1m_yn: 'N' },
+            { participation_stage: '사후관리', score: 91, retention_1m_yn: null },
           ],
           error: null,
         },
       },
     });
 
-    await expect(fetchDashboardStats('auth-1')).resolves.toEqual({
+    await expect(fetchDashboardStats('counselor-1')).resolves.toEqual({
       totalClients: 5,
       inProgress: 3,
       employed: 2,
-      followUpNeeded: 2,
+      followUpNeeded: 1,
       averageScore: 79,
       scoredClients: 4,
       unscoredClients: 1,
@@ -298,51 +307,46 @@ describe('dashboard runtime APIs', () => {
     });
   });
 
-  it('searches dashboard clients through the live client table only', async () => {
+  it('searches dashboard clients through the live clients table only', async () => {
     const queryLog: QueryLogEntry[] = [];
     supabaseState.client = createMockSupabaseClient({
-      client: {
+      clients: {
         select: {
           data: [
             {
-              client_id: 7,
-              client_name: '홍길동',
-              counselor_id: 'auth-1',
+              id: '7',
+              name: '홍길동',
+              counselor_id: 'counselor-1',
               age: null,
-              gender_code: null,
-              phone_encrypted: '010-1234-5678',
+              gender: null,
+              phone: '010-1234-5678',
               education_level: null,
-              school_name: null,
+              school: null,
               major: null,
-              business_type_code: null,
+              business_type: null,
               participation_type: null,
               participation_stage: '초기상담',
-              desired_job_1: '개발자',
-              desired_job_2: '프론트엔드 개발자',
-              desired_job_3: '백엔드 개발자',
-              hire_type: null,
-              hire_place: '제니소프트',
-              hire_job_type: '웹 개발',
-              hire_payment: 3200,
-              hire_date: '2026-03-15',
-              job_place_start: '2026-03-14',
-              job_place_end: null,
-              iap_to: null,
-              retest_stat: null,
-              retest_date: null,
-              continue_serv_1_date: null,
-              continue_serv_1_stat: null,
-              continue_serv_6_date: null,
-              continue_serv_6_stat: null,
-              continue_serv_12_date: null,
-              continue_serv_12_stat: null,
-              continue_serv_18_date: null,
-              continue_serv_18_stat: null,
-              future_card_stat: null,
-              memo: null,
-              business_code: null,
+              desired_job: '개발자',
+              employment_type: null,
+              employer: '제니소프트',
+              job_title: '웹 개발',
+              salary: '3200',
+              employment_date: '2026-03-15',
+              iap_date: null,
+              rediagnosis_yn: null,
+              rediagnosis_date: null,
+              retention_1m_date: null,
+              retention_1m_yn: null,
+              retention_6m_date: null,
+              retention_6m_yn: null,
+              retention_12m_date: null,
+              retention_12m_yn: null,
+              retention_18m_date: null,
+              retention_18m_yn: null,
+              score: null,
+              counsel_notes: null,
               created_at: '2026-03-01T00:00:00Z',
-              update_at: '2026-03-10',
+              updated_at: '2026-03-10',
             },
           ],
           error: null,
@@ -350,23 +354,30 @@ describe('dashboard runtime APIs', () => {
       },
     }, queryLog);
 
-    const result = await searchDashboardClients('auth-1', '홍길동');
+    const result = await searchDashboardClients('counselor-1', '홍길동');
 
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
       name: '홍길동',
-      desired_job_2: '프론트엔드 개발자',
-      desired_job_3: '백엔드 개발자',
-      hire_place: '제니소프트',
-      hire_job_type: '웹 개발',
-      hire_payment: 3200,
-      hire_date: '2026-03-15',
+      desired_job: '개발자',
+      employer: '제니소프트',
+      job_title: '웹 개발',
+      salary: '3200',
+      employment_date: '2026-03-15',
     });
+    // 소유권 필터는 앱 코드가 아니라 RLS(clients_select)가 담당하므로,
+    // 여기서는 검색 조건(or)이 실제로 실렸는지만 확인한다.
     expect(queryLog).toContainEqual({
-      table: 'client',
+      table: 'clients',
       operation: 'select',
       method: 'eq',
-      args: ['counselor_id', 'auth-1'],
+      args: ['counselor_id', 'counselor-1'],
+    });
+    expect(queryLog).toContainEqual({
+      table: 'clients',
+      operation: 'select',
+      method: 'or',
+      args: ['name.ilike.%홍길동%,phone.ilike.%홍길동%,desired_job.ilike.%홍길동%'],
     });
   });
 });

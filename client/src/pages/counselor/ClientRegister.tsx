@@ -6,10 +6,11 @@ import { useState, useEffect } from 'react';
 import { useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { ChevronLeft, User, Phone, Mail, Calendar, Building2, Briefcase, BookOpen, Car, MapPin, Target, Home, FileText } from 'lucide-react';
+import { isEmploymentCompletedStage } from '@shared/const';
 import { usePageGuard } from '@/hooks/usePageGuard';
 import { PARTICIPATION_TYPE_OPTIONS } from '@/const';
 import { createClient } from '@/lib/api';
-import { updateClientEmploymentSnapshotAndSync } from '@/lib/employmentSuccessCase';
+import { syncEmploymentSuccessCase } from '@/lib/employmentSuccessCase';
 import DaumPostcode from 'react-daum-postcode';
 import { encrypt } from '@/lib/crypto'; // 암호화 유틸리티 추가
 import './ClientRegister.css'; // 새로 생성한 시맨틱 CSS import
@@ -68,7 +69,7 @@ export default function ClientRegister() {
 
   const [loading, setLoading] = useState(false);
   const [showPostcode, setShowPostcode] = useState(false);
-  const isEmploymentCompleted = form.processStage === '취업완료';
+  const isEmploymentCompleted = isEmploymentCompletedStage(form.processStage);
 
   const update = (field: string, value: any) => setForm(f => ({ ...f, [field]: value }));
 
@@ -123,8 +124,12 @@ export default function ClientRegister() {
       const day = front.substring(4, 6);
       const genderDigit = form.res_id_back.substring(0, 1);
 
-      let yearPrefix = '19';
-      if (['3', '4'].includes(genderDigit)) yearPrefix = '20';
+      // NOTE(2026-08-26): 뒷자리 첫 숫자(1/2=1900년대, 3/4=2000년대) 대신, 앞자리 2자리
+      // 연도값 자체로 세기를 판단한다 — 00은 2000년생, 01은 2001년생, 10은 2010년생처럼
+      // 현재 연도의 뒤 2자리 이하면 2000년대, 초과면 1900년대로 취급.
+      const currentYearTwoDigit = new Date().getFullYear() % 100;
+      const yearPrefixNum = parseInt(yearPrefixStr, 10);
+      const yearPrefix = yearPrefixNum <= currentYearTwoDigit ? '20' : '19';
 
       const fullYear = parseInt(yearPrefix + yearPrefixStr, 10);
       const birthDateStr = `${fullYear}-${month}-${day}`;
@@ -202,14 +207,16 @@ export default function ClientRegister() {
     try {
       const createdClient = await createClient({
         name: form.name,
+        desired_job: [form.desired_job_1, form.desired_job_2, form.desired_job_3]
+          .map(value => value.trim())
+          .filter(Boolean)
+          .join(', ') || null,
         resident_id: encrypt(form.res_id_back), // 뒷자리 암호화 적용
         birth_date: form.birth_date || null,
         age: form.age ? parseInt(form.age, 10) : null,
         gender: form.gender,
         phone: form.phone,
         email: form.email, // 추가된 이메일 필드 매핑
-        address_1: form.address_1,
-        address_2: form.address_2,
         has_car: form.has_car,
         can_drive: form.can_drive,
         education_level: form.education_level || null,
@@ -229,31 +236,36 @@ export default function ClientRegister() {
         desired_area_2: form.desired_area_2 || null,
         desired_area_3: form.desired_area_3 || null,
         desired_payment: form.desired_payment ? parseInt(form.desired_payment, 10) : null,
-        work_ex_desire: form.work_ex_desire ? parseInt(form.work_ex_desire, 10) : null,
-        work_ex_type: form.work_ex_type ? parseInt(form.work_ex_type, 10) : null,
-        work_ex_company: form.work_ex_company || null,
-        work_ex_start: form.work_ex_start || null,
-        work_ex_end: form.work_ex_end || null,
-        work_ex_graduate: form.work_ex_graduate ? parseInt(form.work_ex_graduate, 10) : null,
-        memo: form.notes || null,
         counselor_id: user?.counselorId || null,
+        counsel_notes: form.notes || null,
+        // NOTE(2026-08-26): 주민번호는 원문/암호화 저장할 컬럼이 없고 resident_id_masked(마스킹된
+        // 값)만 존재한다. 생년월일 6자리 + 뒷자리 첫 글자만 남기고 나머지는 마스킹해서 저장.
+        resident_id_masked: form.res_id_front && form.res_id_back
+          ? `${form.res_id_front}-${form.res_id_back.charAt(0)}******`
+          : null,
+        // NOTE(2026-08-26): 일경험 관련 select들은 코드값(1/2/3)으로 관리되는데, work_exp_*
+        // 컬럼은 다른 텍스트 필드들처럼 사람이 읽는 값으로 저장하는 게 일관적이라 라벨로 변환한다.
+        work_exp_intent: { '1': '필요', '2': '미필요', '3': '해당없음' }[form.work_ex_desire] || null,
+        work_exp_type: { '1': '훈련연계형', '2': '체험형', '3': '인턴형' }[form.work_ex_type] || null,
+        work_exp_company: form.work_ex_company || null,
+        work_exp_period: form.work_ex_start && form.work_ex_end
+          ? `${form.work_ex_start} ~ ${form.work_ex_end}`
+          : null,
+        work_exp_completed: { '1': '수료', '0': '미수료' }[form.work_ex_graduate] || null,
+        // address_1/address_2(옛 필드명)도 하나로 합쳐서 저장, capa는 competency_grade로 저장.
+        address: [form.address_1, form.address_2].map(v => v?.trim()).filter(Boolean).join(' ') || null,
+        competency_grade: form.capa || null,
+        employer: form.hire_place || null,
+        job_title: form.hire_job_type || null,
+        employment_type: form.hire_type || null,
+        salary: form.hire_payment || null,
+        employment_date: form.employment_date || null,
       } as any);
 
       let syncFailed = false;
       if (isEmploymentCompleted) {
         try {
-          await updateClientEmploymentSnapshotAndSync(createdClient.id, {
-            participationStage: form.processStage || null,
-            desiredJob1: form.desired_job_1 || null,
-            desiredJob2: form.desired_job_2 || null,
-            desiredJob3: form.desired_job_3 || null,
-            employmentType: form.hire_type || null,
-            employmentCompany: form.hire_place || null,
-            employmentJobType: form.hire_job_type || null,
-            employmentSalary: form.hire_payment || null,
-            employmentDate: form.employment_date || null,
-            hireDate: form.employment_date || null,
-          });
+          await syncEmploymentSuccessCase(createdClient.id);
         } catch (syncError) {
           console.error('Failed to sync employment success case after registration:', syncError);
           syncFailed = true;
@@ -524,15 +536,15 @@ export default function ClientRegister() {
           <div className="register_grid_3">
             <div className="register_field_group">
               <label className="register_sub_label">희망 직종 1</label>
-              <input type="text" value={form.desired_job_1} onChange={e => update('desired_job_1', e.target.value)} className="register_input sm_padding" />
+              <input type="text" maxLength={80} value={form.desired_job_1} onChange={e => update('desired_job_1', e.target.value)} className="register_input sm_padding" />
             </div>
             <div className="register_field_group">
               <label className="register_sub_label">희망 직종 2</label>
-              <input type="text" value={form.desired_job_2} onChange={e => update('desired_job_2', e.target.value)} className="register_input sm_padding" />
+              <input type="text" maxLength={80} value={form.desired_job_2} onChange={e => update('desired_job_2', e.target.value)} className="register_input sm_padding" />
             </div>
             <div className="register_field_group">
               <label className="register_sub_label">희망 직종 3</label>
-              <input type="text" value={form.desired_job_3} onChange={e => update('desired_job_3', e.target.value)} className="register_input sm_padding" />
+              <input type="text" maxLength={80} value={form.desired_job_3} onChange={e => update('desired_job_3', e.target.value)} className="register_input sm_padding" />
             </div>
 
             <div className="register_field_group">
@@ -670,18 +682,21 @@ export default function ClientRegister() {
 
           <div className="register_row register_field_group">
             <label className="register_label">상담 단계</label>
-            <div className="register_toggle_group">
-              {['초기상담', '심층상담', '취업지원', '취업완료', '사후관리'].map(s => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => update('processStage', s)}
-                  className={`register_toggle_btn ${form.processStage === s ? 'active' : ''}`}
-                >
-                  {s}
-                </button>
+            {/* NOTE(2026-08-26): 실데이터의 참여단계가 고정 5개보다 훨씬 다양해서(구직활동/중단/
+                만종 등 30여 종) 버튼 선택 대신 자유 텍스트 + datalist 자동완성으로 바꿨다. */}
+            <input
+              type="text"
+              list="participation-stage-suggestions"
+              value={form.processStage}
+              onChange={e => update('processStage', e.target.value)}
+              placeholder="예: 초기상담, 심층상담, 취업지원, 취업완료, 구직활동, 사후관리..."
+              className="register_input"
+            />
+            <datalist id="participation-stage-suggestions">
+              {['초기상담', '심층상담', '취업지원', '취업완료', '구직활동', '사후관리', '중단', '만종', '만료'].map(s => (
+                <option key={s} value={s} />
               ))}
-            </div>
+            </datalist>
           </div>
 
           <div className="register_row register_field_group">

@@ -36,19 +36,19 @@ import DaumPostcode from 'react-daum-postcode';
 import { CounselChatTab } from './CounselChatTab';
 import { ClientSummaryAnalysisTab } from './ClientSummaryAnalysisTab';
 import { EmploymentSuccessCaseCard } from './EmploymentSuccessCaseCard';
+import { JobRecommendationsTab } from './JobRecommendationsTab';
 import './ClientDetail.css';
 
 const PRIMARY = '#009C64';
 
-type ClientTab = 'manage' | 'history' | 'input' | 'survey' | 'summary' | 'chat';
+type ClientTab = 'manage' | 'history' | 'input' | 'survey' | 'summary' | 'jobs' | 'chat';
 
 const SUCCESS_CASE_SYNC_FIELDS = new Set([
-  'hire_date',
-  'hire_place',
-  'hire_job_type',
-  'hire_payment',
+  'employment_date',
+  'employer',
+  'job_title',
+  'salary',
   'employment_type',
-  'employment_duration',
   'participation_stage'
 ]);
 
@@ -289,27 +289,13 @@ export default function ClientDetail() {
   const [editingAllowanceId, setEditingAllowanceId] = useState<number | null>(null);
   const [editAllowanceMemoValue, setEditAllowanceMemoValue] = useState('');
 
+  // NOTE(2026-08-26): public.sessions 스키마에는 회차/시간/프로파일링 필드가 없어
+  // type/date/content/next_action만 저장된다.
   const [newSession, setNewSession] = useState({
     type: '초기상담',
     content: '',
     next_action: '',
     date: new Date().toISOString().split('T')[0],
-    session_number: 1 as number | null,
-    start_time: '09:00',
-    end_time: '10:00',
-    holland_code: '',
-    profiling_grade: '',
-    document_link: '',
-    economic_situation: 3 as number | null,
-    social_situation_family: 3 as number | null,
-    social_situation_society: 3 as number | null,
-    self_esteem: 3 as number | null,
-    self_efficacy: 3 as number | null,
-    career_fluidity: 3 as number | null,
-    info_gathering: null as number | null,
-    personality_test_result: '',
-    life_history_result: '',
-    memo: '',
   });
 
   const [editingField, setEditingField] = useState<string | null>(null);
@@ -392,20 +378,12 @@ export default function ClientDetail() {
     if (activeTab === 'history' || activeTab === 'input') loadSessions();
   }, [activeTab, loadSessions]);
 
+  // NOTE(2026-08-26): 자격증 기능은 현재 DB 스키마(public.clients)에서 지원되지 않는다.
+  // addCertificate/deleteCertificate는 항상 에러를 던지도록 스텁 처리되어 있음.
   const handleAddCert = async (name: string, date: string | null) => {
     if (!id || !client) return;
     try {
       await addCertificate(id, name, date);
-      toast.success('자격증이 추가되었습니다.');
-      
-      const newCertArr = [...(client.certificates || []), { certificate_name: name, acquisition_date: date }];
-      const newCertStr = newCertArr.map(c => `${c.certificate_name}${c.acquisition_date ? ` (${c.acquisition_date})` : ''}`).join(', ');
-      
-      setClient({
-        ...client,
-        certificates: newCertArr,
-        certifications: newCertStr
-      });
     } catch (e: any) {
       toast.error('자격증 추가 실패: ' + e.message);
     }
@@ -415,16 +393,6 @@ export default function ClientDetail() {
     if (!id || !client) return;
     try {
       await deleteCertificate(id, name);
-      toast.success('자격증이 삭제되었습니다.');
-      
-      const newCertArr = (client.certificates || []).filter(c => c.certificate_name !== name);
-      const newCertStr = newCertArr.map(c => `${c.certificate_name}${c.acquisition_date ? ` (${c.acquisition_date})` : ''}`).join(', ');
-      
-      setClient({
-        ...client,
-        certificates: newCertArr,
-        certifications: newCertStr
-      });
     } catch (e: any) {
       toast.error('자격증 삭제 실패: ' + e.message);
     }
@@ -446,99 +414,47 @@ export default function ClientDetail() {
     try {
       const updates: any = {};
       
+      // NOTE(2026-08-26): public.clients 스키마 기준. DB 컬럼명이 ClientRow 필드명과
+      // 대부분 동일해서(_code/_encrypted 접미사 없음) dbKey는 기본적으로 필드명 그대로 쓰고,
+      // 예외(표시용으로 이름이 다른 필드, 값 포맷 변환이 필요한 필드)만 처리한다.
       const processField = (f: string, v: any) => {
         let dbKey = f;
         let val: any = v;
 
-        if (f === 'memo') return { dbKey: 'memo', val: v };
-        if (f === 'name') dbKey = 'client_name';
-        if (f === 'phone') dbKey = 'phone_encrypted';
-        if (f === 'gender') {
-          dbKey = 'gender_code';
-          val = v === '남' ? 'M' : 'F';
-        }
-        if (f === 'business_type') {
-          dbKey = 'business_type_code';
-          val = (!v || v.toString().trim() === '') ? null : Number(v);
-        }
-        
-        // Handle field mapping consistency
-        const mapping: Record<string, string> = {
-          'school_name': 'school_name', 
-          'major': 'major', 
-          'email': 'email',
-          'address_1': 'address_1', 'address_2': 'address_2',
-          'birth_date': 'birth_date', 'iap_to': 'iap_to', 'MBTI': 'MBTI',
-          'participation_stage': 'participation_stage',
-          'assignment_type': 'assignment_type', 'capa': 'capa',
-          'participation_type': 'participation_type', 
-          'rediagnosis_yn': 'retest_stat',
-          'retest_score': 'retest_stat',
-          'rediagnosis_date': 'retest_date',
-          'desired_job_1': 'desired_job_1',
-          'desired_job_2': 'desired_job_2',
-          'desired_job_3': 'desired_job_3',
-          'desired_area_1': 'desired_area_1',
-          'desired_area_2': 'desired_area_2',
-          'desired_area_3': 'desired_area_3',
-          'hire_place': 'hire_place',
-          'hire_job_type': 'hire_job_type',
-          'hire_date': 'hire_date',
-          'hire_payment': 'hire_payment',
-          'continue_serv_1_date': 'continue_serv_1_date',
-          'continue_serv_1_stat': 'continue_serv_1_stat',
-          'continue_serv_6_date': 'continue_serv_6_date',
-          'continue_serv_6_stat': 'continue_serv_6_stat',
-          'continue_serv_12_date': 'continue_serv_12_date',
-          'continue_serv_12_stat': 'continue_serv_12_stat',
-          'continue_serv_18_date': 'continue_serv_18_date',
-          'continue_serv_18_stat': 'continue_serv_18_stat'
-        };
-        
-        if (mapping[f]) dbKey = mapping[f];
-        
-        // Global empty string to null conversion for dropdowns/inputs
+        if (f === 'counsel_notes') return { dbKey: 'counsel_notes', val: v };
+        // "보유점수" 필드는 rediagnosis_yn 값을 보여주는 표시용 필드명이라 실제 저장은 rediagnosis_yn으로.
+        if (f === 'retest_score') dbKey = 'rediagnosis_yn';
+
         if (v === '' || v === null || v === undefined) {
-           val = null;
+          val = null;
         } else {
-            // Numeric conversions
-            if (['age', 'retest_stat', 'rediagnosis_yn', 'retest_score', 'desired_payment', 'salary', 'hire_payment', 
-                'continue_serv_1_stat', 'continue_serv_6_stat', 'continue_serv_12_stat', 'continue_serv_18_stat'].includes(f)) {
-              const num = Number(v.toString().replace(/[^0-9.-]/g, ''));
-              val = isNaN(num) ? null : num;
-            }
+          if (f === 'age') {
+            const num = Number(v.toString().replace(/[^0-9.-]/g, ''));
+            val = isNaN(num) ? null : num;
+          }
 
-            // Phone formatting (01012345678 -> 010-1234-5678)
-            if (f === 'phone') {
-              const digits = v.toString().replace(/[^0-9]/g, '');
-              if (digits.length === 11) {
-                val = digits.replace(/(\d{3})(\d{4})(\d{4})/, '$1-$2-$3');
-              } else if (digits.length === 10) {
-                val = digits.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3');
-              } else {
-                val = digits;
-              }
+          // Phone formatting (01012345678 -> 010-1234-5678)
+          if (f === 'phone') {
+            const digits = v.toString().replace(/[^0-9]/g, '');
+            if (digits.length === 11) {
+              val = digits.replace(/(\d{3})(\d{4})(\d{4})/, '$1-$2-$3');
+            } else if (digits.length === 10) {
+              val = digits.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3');
+            } else {
+              val = digits;
             }
+          }
 
-            // Date formatting (19940624 -> 1994-06-24)
-            const dateFields = ['birth_date', 'iap_to', 'rediagnosis_date', 'hire_date', 'initial_counsel_date', 
-                                'start_date', 'end_date', 'apply_date', 'expected_payment_date', 
-                                'continue_serv_1_date', 'continue_serv_6_date', 'continue_serv_12_date', 'continue_serv_18_date'];
-            if (dateFields.includes(f)) {
-              const digits = v.toString().replace(/[^0-9]/g, '');
-              if (digits.length === 8) {
-                val = digits.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
-              } else {
-                val = v;
-              }
+          // Date formatting (19940624 -> 1994-06-24)
+          const dateFields = ['iap_date', 'initial_counsel_date', 'rediagnosis_date', 'employment_date'];
+          if (dateFields.includes(f)) {
+            const digits = v.toString().replace(/[^0-9]/g, '');
+            if (digits.length === 8) {
+              val = digits.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
+            } else {
+              val = v;
             }
-            
-            // Field-specific boolean/code conversions
-            if (f === 'has_car' || f === 'is_working_parttime' || f === 'can_drive') {
-               val = v === 'Y' || v === true;
-            } else if (f === 'future_card_stat') {
-               val = v === '1' ? 1 : 0;
-            }
+          }
         }
 
         return { dbKey, val };
@@ -693,7 +609,7 @@ export default function ClientDetail() {
         client_id: id,
         ...newSession,
         counselor_name: user?.name || null,
-        counselor_id: user?.id || null,
+        counselor_id: user?.counselorId || null,
       });
 
       toast.success('저장되었습니다.');
@@ -702,22 +618,6 @@ export default function ClientDetail() {
         content: '',
         next_action: '',
         date: new Date().toISOString().split('T')[0],
-        session_number: (Number(newSession.session_number) || 1) + 1,
-        start_time: '09:00',
-        end_time: '10:00',
-        holland_code: '',
-        profiling_grade: '',
-        document_link: '',
-        personality_test_result: '',
-        life_history_result: '',
-        memo: '',
-        economic_situation: 3,
-        social_situation_family: 3,
-        social_situation_society: 3,
-        self_esteem: 3,
-        self_efficacy: 3,
-        career_fluidity: 3,
-        info_gathering: null,
       });
       loadSessions();
       loadClient(); // 내담자 정보(참여 단계) 새로고침
@@ -783,50 +683,33 @@ export default function ClientDetail() {
         </div>
       </div>
 
-      {/* Progress Tracker */}
-      <div className="counsel_progress_bar mb-8 px-2">
-        <div className="flex justify-between items-center relative gap-4">
-          {['초기상담', '심층상담', '취업지원', '취업완료', '사후처리'].map((stage, idx, arr) => {
-            const currentIdx = arr.indexOf(client.participation_stage || '');
-            const isActive = idx <= currentIdx;
-            const isCurrent = stage === client.participation_stage;
-            
-            return (
-              <div key={stage} className="flex flex-col items-center gap-2 relative z-10 flex-1">
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center border-2 transition-all duration-500 text-xs
-                    ${isActive ? 'bg-primary border-primary text-white scale-110' : 'bg-white border-muted text-muted-foreground'}
-                    ${isCurrent ? 'ring-4 ring-primary/20' : ''}`}
-                >
-                  {isActive && idx < currentIdx ? <Check size={12} strokeWidth={3} /> : <span className="text-[10px] font-bold">{idx + 1}</span>}
-                </div>
-                <span className={`text-[11px] font-bold transition-all ${isActive ? 'text-primary' : 'text-muted-foreground'}`}>
-                  {stage}
-                </span>
-                
-                {/* Active Progress Line */}
-                {idx < arr.length - 1 && idx < currentIdx && (
-                  <div className="absolute left-1/2 w-full h-0.5 bg-primary top-3.5 -translate-y-1/2 -z-10 translate-x-3.5"></div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {/*
+        NOTE(2026-08-26): 실데이터의 참여단계 값이 5단계 고정 파이프라인을 훨씬 벗어나
+        (구직활동/중단/만종/사후관리취업 등 30여 종) 있어, 5단계 진행바는 대부분의 레코드에서
+        전부 비활성으로 보이는 오해의 소지가 있었다. 상단 배지(위 헤더)가 실제 값을 그대로
+        보여주므로 진행바는 제거함.
+      */}
 
       <EmploymentSuccessCaseCard clientId={client.id} />
 
       {/* Tabs */}
-      <div className="counsel_tab_wrapper flex gap-1 border-b border-border pb-px overflow-x-auto mb-6">
+      <div className="counsel_tab_wrapper flex gap-1 border-b border-border pb-px overflow-x-auto mb-6" role="tablist" aria-label="내담자 상세 메뉴">
         {[ 
           { id: 'manage', label: '대시보드' },
           { id: 'history', label: '상담이력' },
           { id: 'input', label: '상담입력' },
           { id: 'survey', label: '구직준비도' },
           { id: 'summary', label: '요약 및 분석' },
+          { id: 'jobs', label: '채용공고 추천' },
           { id: 'chat', label: '챗봇' }
         ].map((tab) => (
           <button
             key={tab.id}
+            id={`client-tab-${tab.id}`}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            aria-controls="client-tabpanel"
             onClick={() => setActiveTab(tab.id as ClientTab)}
             className={`counsel_tab_btn px-6 py-3 text-sm font-medium transition-all relative
               ${activeTab === tab.id ? 'text-primary after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-primary' : 'text-muted-foreground hover:text-foreground'}`}
@@ -837,7 +720,12 @@ export default function ClientDetail() {
       </div>
 
       {/* Content */}
-      <div className="counsel_content_card bg-card border border-border rounded-xl p-6 min-h-[500px] shadow-sm">
+      <div
+        id="client-tabpanel"
+        role="tabpanel"
+        aria-labelledby={`client-tab-${activeTab}`}
+        className="counsel_content_card bg-card border border-border rounded-xl p-6 min-h-[500px] shadow-sm"
+      >
         {activeTab === 'manage' && (
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -851,148 +739,58 @@ export default function ClientDetail() {
                 <div className="space-y-1">
                   <DashboardField label="연락처" icon={<Phone size={13} />} field="phone" value={client.phone} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
                   
-                  <div className="relative">
-                    <DashboardField 
-                      label="생년월일(주민등록번호 앞자리)" 
-                      icon={<Calendar size={13} />} 
-                      field="birth_date" 
-                      value={client.birth_date} 
-                      onEdit={startEdit} 
-                      editingField={editingField} 
-                      editValue={editValue} 
-                      setEditValue={setEditValue} 
-                      onConfirm={handleUpdateField} 
-                      onCancel={cancelEdit} 
-                    />
-                    {!editingField && client.birth_date && (
-                      <div className="absolute right-0 bottom-3 text-[11px] font-bold text-primary bg-primary/5 px-2 py-0.5 rounded-md border border-primary/10">
-                        {(() => {
-                           try {
-                             const birth = new Date(client.birth_date);
-                             const today = new Date();
-                             let age = today.getFullYear() - birth.getFullYear();
-                             const m = today.getMonth() - birth.getMonth();
-                             if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
-                             return `${age}세`;
-                           } catch { return ''; }
-                        })()}
-                      </div>
-                    )}
-                  </div>
+                  <DashboardField
+                    label="나이"
+                    icon={<Calendar size={13} />}
+                    field="age"
+                    value={client.age != null ? String(client.age) : null}
+                    onEdit={startEdit}
+                    editingField={editingField}
+                    editValue={editValue}
+                    setEditValue={setEditValue}
+                    onConfirm={handleUpdateField}
+                    onCancel={cancelEdit}
+                  />
 
-                  <DashboardField label="주소" icon={<MapPin size={13} />} field="address_1" value={client.address_1} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} subValue={client.address_2} subField="address_2" type="address" />
-                  
-                  <DashboardField 
-                    label="최종학력" 
-                    icon={<BookOpen size={13} />} 
-                    field="education_level" 
-                    value={client.education_level} 
-                    onEdit={startEdit} 
-                    editingField={editingField} 
-                    editValue={editValue} 
-                    setEditValue={setEditValue} 
-                    onConfirm={handleUpdateField} 
-                    onCancel={cancelEdit} 
+                  <DashboardField label="주소" icon={<MapPin size={13} />} field="address" value={client.address} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
+
+                  <DashboardField
+                    label="최종학력"
+                    icon={<BookOpen size={13} />}
+                    field="education_level"
+                    value={client.education_level}
+                    onEdit={startEdit}
+                    editingField={editingField}
+                    editValue={editValue}
+                    setEditValue={setEditValue}
+                    onConfirm={handleUpdateField}
+                    onCancel={cancelEdit}
                     type="select"
                     options={['초졸', '중졸', '고졸', '전문대졸', '대졸', '석사', '박사'].map(v => ({ value: v, label: v }))}
                   />
-                  <DashboardField 
-                    label="대학교명" 
-                    icon={<Building2 size={13} />} 
-                    field="school_name" 
-                    value={client.school_name} 
-                    onEdit={startEdit} 
-                    editingField={editingField} 
-                    editValue={editValue} 
-                    setEditValue={setEditValue} 
-                    onConfirm={handleUpdateField} 
-                    onCancel={cancelEdit} 
+                  <DashboardField
+                    label="대학교명"
+                    icon={<Building2 size={13} />}
+                    field="school"
+                    value={client.school}
+                    onEdit={startEdit}
+                    editingField={editingField}
+                    editValue={editValue}
+                    setEditValue={setEditValue}
+                    onConfirm={handleUpdateField}
+                    onCancel={cancelEdit}
                   />
-                  <DashboardField 
-                    label="전공" 
-                    icon={<Award size={13} />} 
-                    field="major" 
-                    value={client.major} 
-                    onEdit={startEdit} 
-                    editingField={editingField} 
-                    editValue={editValue} 
-                    setEditValue={setEditValue} 
-                    onConfirm={handleUpdateField} 
-                    onCancel={cancelEdit} 
-                  />
-
-                  <CertificationList value={client.certificates} onAdd={handleAddCert} onDelete={handleDeleteCert} />
-                  
-                  <DashboardField label="이메일" icon={<Mail size={13} />} field="email" value={client.email} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
-                  
-                  <DashboardField 
-                    label="MBTI" 
-                    icon={<Target size={13} />} 
-                    field="MBTI" 
-                    value={client.MBTI} 
-                    onEdit={startEdit} 
-                    editingField={editingField} 
-                    editValue={editValue} 
-                    setEditValue={setEditValue} 
-                    onConfirm={handleUpdateField} 
-                    onCancel={cancelEdit} 
-                    type="select"
-                    options={['ISTJ', 'ISFJ', 'INFJ', 'INTJ', 'ISTP', 'ISFP', 'INFP', 'INTP', 'ESTP', 'ESFP', 'ENFP', 'ENTP', 'ESTJ', 'ESFJ', 'ENFJ', 'ENTJ'].map(m => ({ value: m, label: m }))}
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-border/40">
-                  <DashboardField 
-                    label="자차보유" 
-                    field="has_car" 
-                    value={client.has_car === true ? 'Y' : client.has_car === false ? 'N' : null} 
-                    onEdit={() => startEdit('has_car', client.has_car === true ? 'Y' : client.has_car === false ? 'N' : '')} 
-                    editingField={editingField} 
-                    editValue={editValue} 
-                    setEditValue={setEditValue} 
-                    onConfirm={handleUpdateField} 
-                    onCancel={cancelEdit} 
-                    type="select"
-                    options={[{ value: 'Y', label: '예' }, { value: 'N', label: '아니오' }]}
-                  />
-                  <DashboardField 
-                    label="내일배움카드" 
-                    field="future_card_stat" 
-                    value={client.future_card_stat != null ? String(client.future_card_stat) : null} 
-                    onEdit={() => startEdit('future_card_stat', client.future_card_stat != null ? String(client.future_card_stat) : '')} 
-                    editingField={editingField} 
-                    editValue={editValue} 
-                    setEditValue={setEditValue} 
-                    onConfirm={handleUpdateField} 
-                    onCancel={cancelEdit} 
-                    type="select"
-                    options={[{ value: '1', label: '소유' }, { value: '0', label: '미소유' }]}
-                  />
-                  <DashboardField 
-                    label="현재 알바중" 
-                    field="is_working_parttime" 
-                    value={client.is_working_parttime === true ? 'Y' : client.is_working_parttime === false ? 'N' : null} 
-                    onEdit={() => startEdit('is_working_parttime', client.is_working_parttime === true ? 'Y' : client.is_working_parttime === false ? 'N' : '')} 
-                    editingField={editingField} 
-                    editValue={editValue} 
-                    setEditValue={setEditValue} 
-                    onConfirm={handleUpdateField} 
-                    onCancel={cancelEdit} 
-                    type="select"
-                    options={[{ value: 'Y', label: '예' }, { value: 'N', label: '아니오' }]}
-                  />
-                  <DashboardField 
-                    label="운전가능" 
-                    field="can_drive" 
-                    value={client.can_drive === true ? 'Y' : client.can_drive === false ? 'N' : null} 
-                    onEdit={() => startEdit('can_drive', client.can_drive === true ? 'Y' : client.can_drive === false ? 'N' : '')} 
-                    editingField={editingField} 
-                    editValue={editValue} 
-                    setEditValue={setEditValue} 
-                    onConfirm={handleUpdateField} 
-                    onCancel={cancelEdit} 
-                    type="select"
-                    options={[{ value: 'Y', label: '예' }, { value: 'N', label: '아니오' }]}
+                  <DashboardField
+                    label="전공"
+                    icon={<Award size={13} />}
+                    field="major"
+                    value={client.major}
+                    onEdit={startEdit}
+                    editingField={editingField}
+                    editValue={editValue}
+                    setEditValue={setEditValue}
+                    onConfirm={handleUpdateField}
+                    onCancel={cancelEdit}
                   />
                 </div>
               </div>
@@ -1045,10 +843,10 @@ export default function ClientDetail() {
                     type="select"
                     options={[...PARTICIPATION_TYPE_OPTIONS]}
                 />
-                <DashboardField 
-                    label="역량등급" 
-                    field="capa" 
-                    value={client.capa} 
+                <DashboardField
+                    label="역량등급"
+                    field="competency_grade"
+                    value={client.competency_grade}
                     onEdit={startEdit} 
                     editingField={editingField} 
                     editValue={editValue} 
@@ -1066,24 +864,18 @@ export default function ClientDetail() {
                 <DashboardField 
                     label="참여단계" 
                     field="participation_stage" 
-                    value={client.participation_stage} 
-                    onEdit={startEdit} 
-                    editingField={editingField} 
-                    editValue={editValue} 
-                    setEditValue={setEditValue} 
-                    onConfirm={handleUpdateField} 
-                    onCancel={cancelEdit} 
-                    isBadge 
-                    stageColors={stageColors} 
-                    type="select"
-                    options={[
-                        { value: '초기상담', label: '초기상담' },
-                        { value: '심층상담', label: '심층상담' },
-                        { value: '취업지원', label: '취업지원' },
-                        { value: '취업완료', label: '취업완료' },
-                        { value: '사후처리', label: '사후처리' }
-                    ]}
+                    value={client.participation_stage}
+                    onEdit={startEdit}
+                    editingField={editingField}
+                    editValue={editValue}
+                    setEditValue={setEditValue}
+                    onConfirm={handleUpdateField}
+                    onCancel={cancelEdit}
+                    isBadge
+                    stageColors={stageColors}
                 />
+                {/* NOTE(2026-08-26): 실데이터의 참여단계가 고정 5개보다 훨씬 다양해서(30여 종)
+                    드롭다운 대신 자유 텍스트로 입력받는다. */}
               </div>
 
               {/* Column 3: Key Dates */}
@@ -1092,7 +884,7 @@ export default function ClientDetail() {
                   <Clock size={15} className="text-primary" /> 주요 일정
                 </h3>
                 <DashboardField label="초기상담일" icon={<Calendar size={13} />} field="initial_counsel_date" value={client.initial_counsel_date} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" readonly />
-                <DashboardField label="IAP수립일" icon={<Calendar size={13} />} field="iap_to" value={client.iap_to} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" />
+                <DashboardField label="IAP수립일" icon={<Calendar size={13} />} field="iap_date" value={client.iap_date} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" />
                 <div className="grid grid-cols-2 gap-4">
                   <DashboardField label="재진단일" icon={<Calendar size={13} />} field="rediagnosis_date" value={client.rediagnosis_date} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" />
                   <DashboardField 
@@ -1345,30 +1137,7 @@ export default function ClientDetail() {
                 <h3 className="text-sm font-bold flex items-center gap-2 mb-5 text-foreground/80">
                   <Target size={15} className="text-primary" /> 희망 조건 상세
                 </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <DashboardField label="희망지역 1" field="desired_area_1" value={client.desired_area_1} onEdit={() => startEdit('desired_area_1', client.desired_area_1)} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
-                  <DashboardField label="희망직종 1" field="desired_job_1" value={client.desired_job_1} onEdit={() => startEdit('desired_job_1', client.desired_job_1)} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <DashboardField label="희망지역 2" field="desired_area_2" value={client.desired_area_2} onEdit={() => startEdit('desired_area_2', client.desired_area_2)} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
-                  <DashboardField label="희망직종 2" field="desired_job_2" value={client.desired_job_2} onEdit={() => startEdit('desired_job_2', client.desired_job_2)} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <DashboardField label="희망지역 3" field="desired_area_3" value={client.desired_area_3} onEdit={() => startEdit('desired_area_3', client.desired_area_3)} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
-                  <DashboardField label="희망직종 3" field="desired_job_3" value={client.desired_job_3} onEdit={() => startEdit('desired_job_3', client.desired_job_3)} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
-                </div>
-                <DashboardField 
-                  label="희망급여" 
-                  icon={<span className="font-bold text-[11px] text-primary">₩</span>} 
-                  field="desired_payment" 
-                  value={client.desired_payment ? `${Number(client.desired_payment).toLocaleString()}만원` : '-'} 
-                  onEdit={() => startEdit('desired_payment', client.desired_payment)} 
-                  editingField={editingField} 
-                  editValue={editValue} 
-                  setEditValue={setEditValue} 
-                  onConfirm={handleUpdateField} 
-                  onCancel={cancelEdit} 
-                />
+                <DashboardField label="희망직종" field="desired_job" value={client.desired_job} onEdit={() => startEdit('desired_job', client.desired_job)} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
               </div>
 
               {/* Column 5: Employment Results */}
@@ -1376,20 +1145,20 @@ export default function ClientDetail() {
                 <h3 className="text-sm font-bold flex items-center gap-2 mb-5 text-foreground/80">
                   <Briefcase size={15} className="text-primary" /> 취업 성과
                 </h3>
-                <DashboardField label="취업처" field="hire_place" value={client.hire_place} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
-                <DashboardField label="취업직무" field="hire_job_type" value={client.hire_job_type} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
-                <DashboardField label="취업일자" icon={<Calendar size={13} />} field="hire_date" value={client.hire_date} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" />
-                <DashboardField 
-                    label="급여" 
-                    icon={<span className="font-bold text-[11px] text-primary">₩</span>} 
-                    field="hire_payment" 
-                    value={client.hire_payment ? `${Number(client.hire_payment).toLocaleString()}만원` : '-'} 
-                    onEdit={() => startEdit('hire_payment', client.hire_payment)} 
-                    editingField={editingField} 
-                    editValue={editValue} 
-                    setEditValue={setEditValue} 
-                    onConfirm={handleUpdateField} 
-                    onCancel={cancelEdit} 
+                <DashboardField label="취업처" field="employer" value={client.employer} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
+                <DashboardField label="취업직무" field="job_title" value={client.job_title} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} />
+                <DashboardField label="취업일자" icon={<Calendar size={13} />} field="employment_date" value={client.employment_date} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" />
+                <DashboardField
+                    label="급여"
+                    icon={<span className="font-bold text-[11px] text-primary">₩</span>}
+                    field="salary"
+                    value={client.salary}
+                    onEdit={() => startEdit('salary', client.salary)}
+                    editingField={editingField}
+                    editValue={editValue}
+                    setEditValue={setEditValue}
+                    onConfirm={handleUpdateField}
+                    onCancel={cancelEdit}
                 />
               </div>
 
@@ -1399,17 +1168,17 @@ export default function ClientDetail() {
                   <Award size={15} className="text-primary" /> 고용 유지 현황
                 </h3>
                 <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-2">
-                  <DashboardField label="1개월 근속일" field="continue_serv_1_date" value={client.continue_serv_1_date} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" />
-                  <DashboardField label="1개월 근속여부" field="continue_serv_1_stat" value={client.continue_serv_1_stat != null ? String(client.continue_serv_1_stat) : null} onEdit={() => startEdit('continue_serv_1_stat', client.continue_serv_1_stat != null ? String(client.continue_serv_1_stat) : '')} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="select" options={[{ value: '1', label: '유지' }, { value: '0', label: '미유지' }]} />
-                  
-                  <DashboardField label="6개월 근속일" field="continue_serv_6_date" value={client.continue_serv_6_date} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" />
-                  <DashboardField label="6개월 근속여부" field="continue_serv_6_stat" value={client.continue_serv_6_stat != null ? String(client.continue_serv_6_stat) : null} onEdit={() => startEdit('continue_serv_6_stat', client.continue_serv_6_stat != null ? String(client.continue_serv_6_stat) : '')} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="select" options={[{ value: '1', label: '유지' }, { value: '0', label: '미유지' }]} />
-                  
-                  <DashboardField label="12개월 근속일" field="continue_serv_12_date" value={client.continue_serv_12_date} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" />
-                  <DashboardField label="12개월 근속여부" field="continue_serv_12_stat" value={client.continue_serv_12_stat != null ? String(client.continue_serv_12_stat) : null} onEdit={() => startEdit('continue_serv_12_stat', client.continue_serv_12_stat != null ? String(client.continue_serv_12_stat) : '')} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="select" options={[{ value: '1', label: '유지' }, { value: '0', label: '미유지' }]} />
-                  
-                  <DashboardField label="18개월 근속일" field="continue_serv_18_date" value={client.continue_serv_18_date} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" />
-                  <DashboardField label="18개월 근속여부" field="continue_serv_18_stat" value={client.continue_serv_18_stat != null ? String(client.continue_serv_18_stat) : null} onEdit={() => startEdit('continue_serv_18_stat', client.continue_serv_18_stat != null ? String(client.continue_serv_18_stat) : '')} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="select" options={[{ value: '1', label: '유지' }, { value: '0', label: '미유지' }]} />
+                  <DashboardField label="1개월 근속일" field="retention_1m_date" value={client.retention_1m_date} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" />
+                  <DashboardField label="1개월 근속여부" field="retention_1m_yn" value={client.retention_1m_yn} onEdit={() => startEdit('retention_1m_yn', client.retention_1m_yn)} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="select" options={[{ value: 'Y', label: '유지' }, { value: 'N', label: '미유지' }]} />
+
+                  <DashboardField label="6개월 근속일" field="retention_6m_date" value={client.retention_6m_date} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" />
+                  <DashboardField label="6개월 근속여부" field="retention_6m_yn" value={client.retention_6m_yn} onEdit={() => startEdit('retention_6m_yn', client.retention_6m_yn)} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="select" options={[{ value: 'Y', label: '유지' }, { value: 'N', label: '미유지' }]} />
+
+                  <DashboardField label="12개월 근속일" field="retention_12m_date" value={client.retention_12m_date} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" />
+                  <DashboardField label="12개월 근속여부" field="retention_12m_yn" value={client.retention_12m_yn} onEdit={() => startEdit('retention_12m_yn', client.retention_12m_yn)} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="select" options={[{ value: 'Y', label: '유지' }, { value: 'N', label: '미유지' }]} />
+
+                  <DashboardField label="18개월 근속일" field="retention_18m_date" value={client.retention_18m_date} onEdit={startEdit} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="date" />
+                  <DashboardField label="18개월 근속여부" field="retention_18m_yn" value={client.retention_18m_yn} onEdit={() => startEdit('retention_18m_yn', client.retention_18m_yn)} editingField={editingField} editValue={editValue} setEditValue={setEditValue} onConfirm={handleUpdateField} onCancel={cancelEdit} type="select" options={[{ value: 'Y', label: '유지' }, { value: 'N', label: '미유지' }]} />
                 </div>
                 <div className="mt-4 pt-4 border-t border-border/40">
                    {/* Removed score field */}
@@ -1423,13 +1192,13 @@ export default function ClientDetail() {
                 <h3 className="text-sm font-bold flex items-center gap-2 text-foreground/80">
                   <ClipboardList size={15} className="text-primary" /> 상담 가이드 및 특이사항
                 </h3>
-                {editingField !== 'memo' && (
-                  <button onClick={() => startEdit('memo', client.memo)} className="flex items-center gap-1.5 px-3 py-1 bg-white border border-border rounded-full text-xs hover:bg-muted transition-colors">
+                {editingField !== 'counsel_notes' && (
+                  <button onClick={() => startEdit('counsel_notes', client.counsel_notes)} className="flex items-center gap-1.5 px-3 py-1 bg-white border border-border rounded-full text-xs hover:bg-muted transition-colors">
                     <Edit3 size={11} /> 편집하기
                   </button>
                 )}
               </div>
-              {editingField === 'memo' ? (
+              {editingField === 'counsel_notes' ? (
                 <div className="space-y-3">
                   <textarea
                     autoFocus
@@ -1441,12 +1210,12 @@ export default function ClientDetail() {
                   />
                   <div className="flex justify-end gap-2">
                     <button onClick={cancelEdit} className="px-4 py-1.5 text-xs text-muted-foreground hover:bg-muted rounded-md transition-colors">취소</button>
-                    <button onClick={() => handleUpdateField('memo')} className="px-5 py-1.5 text-xs text-white bg-primary hover:bg-primary/90 rounded-md shadow-sm transition-colors">저장하기</button>
+                    <button onClick={() => handleUpdateField('counsel_notes')} className="px-5 py-1.5 text-xs text-white bg-primary hover:bg-primary/90 rounded-md shadow-sm transition-colors">저장하기</button>
                   </div>
                 </div>
               ) : (
                 <div className="p-5 bg-white rounded-xl text-sm leading-relaxed border border-border/50 min-h-[120px] whitespace-pre-wrap shadow-[inset_0_1px_3px_rgba(0,0,0,0.02)]">
-                  {client.memo || <span className="text-muted-foreground italic">등록된 특이사항이 없습니다. 상담을 통해 업데이트 해주세요.</span>}
+                  {client.counsel_notes || <span className="text-muted-foreground italic">등록된 특이사항이 없습니다. 상담을 통해 업데이트 해주세요.</span>}
                 </div>
               )}
             </div>
@@ -1471,41 +1240,19 @@ export default function ClientDetail() {
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-3">
                           <span className="text-xl font-bold bg-primary/5 px-3 py-1 rounded-lg text-primary">{s.type || '일반상담'}</span>
-                          {isEditingHistory ? (
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-medium text-muted-foreground">회차</span>
-                              <input
-                                type="number"
-                                value={historyEditDraft.session_number ?? ''}
-                                onChange={e => setHistoryEditDraft({
-                                  ...historyEditDraft,
-                                  session_number: e.target.value === '' ? null : Number(e.target.value),
-                                })}
-                                className="w-24 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
-                              />
-                            </div>
-                          ) : (
-                            s.session_number && <span className="bg-muted text-muted-foreground px-3 py-1 rounded-lg text-xs font-bold">{s.session_number}회차</span>
-                          )}
                         </div>
                         <div className="flex items-center gap-2 text-sm text-muted-foreground ml-1">
                           <Clock size={13} />
                           <span>{s.date}</span>
-                          <span className="opacity-30">|</span>
-                          <span>{formatTime(s.start_time)} ~ {formatTime(s.end_time)}</span>
                         </div>
                       </div>
                     </div>
                     {!isEditingHistory ? (
-                      <button 
+                      <button
                         onClick={() => {
                           setHistoryEditDraft({
-                            session_number: s.session_number,
-                            memo: s.memo,
-                            economic_situation: s.economic_situation,
-                            social_situation_family: s.social_situation_family,
-                            social_situation_society: s.social_situation_society,
-                            content: s.content
+                            content: s.content,
+                            next_action: s.next_action,
                           });
                           setIsEditingHistory(true);
                         }}
@@ -1546,50 +1293,27 @@ export default function ClientDetail() {
                       {isEditingHistory ? (
                         <textarea 
                           className="w-full p-4 text-sm bg-background border border-primary/30 rounded-xl outline-none focus:ring-2 focus:ring-primary/10 transition-all min-h-[200px]"
-                          value={historyEditDraft.memo || ''}
-                          onChange={e => setHistoryEditDraft({...historyEditDraft, memo: e.target.value})}
-                        />
-                      ) : (
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90 p-5 bg-muted/10 rounded-xl border border-border/30">{s.memo || '내용 없음'}</p>
-                      )}
-                    </div>
-                    
-                    <div className="grid grid-cols-3 gap-6">
-                      {[
-                        { label: '경제상황', field: 'economic_situation' },
-                        { label: '사회적 상황_가족', field: 'social_situation_family' },
-                        { label: '사회적 상황_사회', field: 'social_situation_society' }
-                      ].map(item => (
-                        <div key={item.field} className="bg-muted/10 p-5 rounded-xl border border-border/30">
-                          <h4 className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2">{item.label}</h4>
-                          {isEditingHistory ? (
-                            <select 
-                              className="w-full text-sm bg-white border border-border rounded-md px-2 py-1 outline-none"
-                              value={(historyEditDraft as any)[item.field] || 3}
-                              onChange={e => setHistoryEditDraft({...historyEditDraft, [item.field]: Number(e.target.value)})}
-                            >
-                              {[1, 2, 3, 4, 5].map(v => <option key={v} value={v}>{v}점</option>)}
-                            </select>
-                          ) : (
-                            <p className="text-sm font-bold text-primary">{(s as any)[item.field] ? `${(s as any)[item.field]}점` : '-'}</p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="pt-6 border-t border-border/40">
-                      <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-3 flex items-center gap-2">
-                        <div className="w-1 h-3 bg-amber-500 rounded-full"></div> 개인 메모 (상담사 의견)
-                      </h4>
-                      {isEditingHistory ? (
-                        <textarea 
-                          className="w-full p-4 text-sm bg-amber-50/10 border border-amber-200/50 rounded-xl outline-none focus:ring-2 focus:ring-amber-200 transition-all min-h-[100px]"
-                          placeholder="상담사만 확인 가능한 개인 메모입니다..."
                           value={historyEditDraft.content || ''}
                           onChange={e => setHistoryEditDraft({...historyEditDraft, content: e.target.value})}
                         />
                       ) : (
-                        <p className="text-sm italic leading-relaxed whitespace-pre-wrap text-muted-foreground/80 p-5 bg-amber-50/5 rounded-xl border border-dashed border-amber-200/40">{s.content || '작성된 메모가 없습니다.'}</p>
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90 p-5 bg-muted/10 rounded-xl border border-border/30">{s.content || '내용 없음'}</p>
+                      )}
+                    </div>
+
+                    <div className="pt-6 border-t border-border/40">
+                      <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-3 flex items-center gap-2">
+                        <div className="w-1 h-3 bg-amber-500 rounded-full"></div> 다음 조치사항
+                      </h4>
+                      {isEditingHistory ? (
+                        <textarea
+                          className="w-full p-4 text-sm bg-amber-50/10 border border-amber-200/50 rounded-xl outline-none focus:ring-2 focus:ring-amber-200 transition-all min-h-[100px]"
+                          placeholder="다음 상담 시 확인할 조치사항을 입력하세요..."
+                          value={historyEditDraft.next_action || ''}
+                          onChange={e => setHistoryEditDraft({...historyEditDraft, next_action: e.target.value})}
+                        />
+                      ) : (
+                        <p className="text-sm italic leading-relaxed whitespace-pre-wrap text-muted-foreground/80 p-5 bg-amber-50/5 rounded-xl border border-dashed border-amber-200/40">{s.next_action || '등록된 조치사항이 없습니다.'}</p>
                       )}
                     </div>
                   </div>
@@ -1605,8 +1329,6 @@ export default function ClientDetail() {
                           <div className="flex items-center gap-2">
                             <div className="flex items-center">
                               <span className="bg-primary/10 text-primary px-2.5 py-1 rounded text-[10px] font-bold">{s.type || '일반상담'}</span>
-                              <span className="text-muted-foreground/30 px-1.5 text-[10px]">-</span>
-                              <span className="bg-muted text-muted-foreground px-2.5 py-1 rounded text-[10px] font-bold tracking-tight">{s.session_number}회차</span>
                             </div>
                             <span className="text-[10px] text-muted-foreground/60 ml-2 font-medium">{s.date}</span>
                           </div>
@@ -1614,7 +1336,7 @@ export default function ClientDetail() {
                             <button onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }} className="p-2 hover:bg-destructive/10 hover:text-destructive rounded-full transition-colors"><Trash2 size={15} /></button>
                           </div>
                         </div>
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90 line-clamp-2">{s.memo || s.content}</p>
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90 line-clamp-2">{s.content}</p>
                       </div>
                     ))}
               </>
@@ -1627,7 +1349,7 @@ export default function ClientDetail() {
             <h3 className="text-sm font-bold mb-6 flex items-center gap-2"><Plus size={16} className="text-primary" /> 새로운 상담 기록</h3>
             
             <div className="space-y-6">
-              {/* Row 1: Type & Session */}
+              {/* Row 1: Type & Date */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-[11px] font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">상담 유형</label>
@@ -1636,57 +1358,21 @@ export default function ClientDetail() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-[11px] font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">회차 (session_number)</label>
-                  <input type="number" value={newSession.session_number || ''} onChange={(e) => setNewSession({ ...newSession, session_number: Number(e.target.value) })} className="w-full h-10 px-3 bg-background border border-border rounded-lg outline-none focus:ring-2 focus:ring-primary/20 transition-all text-sm" />
+                  <label className="text-[11px] font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">상담 일자</label>
+                  <input type="date" value={newSession.date} onChange={(e) => setNewSession({ ...newSession, date: e.target.value })} className="w-full h-10 px-3 bg-background border border-border rounded-lg outline-none focus:ring-2 focus:ring-primary/20 transition-all text-sm" />
                 </div>
               </div>
 
-              {/* Row 2: Date */}
+              {/* Row 2: Content */}
               <div>
-                <label className="text-[11px] font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">상담 일자</label>
-                <input type="date" value={newSession.date} onChange={(e) => setNewSession({ ...newSession, date: e.target.value })} className="w-full h-10 px-3 bg-background border border-border rounded-lg outline-none focus:ring-2 focus:ring-primary/20 transition-all text-sm" />
+                <label className="text-[11px] font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">상담 내용</label>
+                <textarea value={newSession.content} onChange={(e) => setNewSession({ ...newSession, content: e.target.value })} rows={6} className="w-full p-4 bg-background border border-border rounded-xl outline-none focus:ring-2 focus:ring-primary/20 transition-all resize-none text-sm" placeholder="상담 내용을 입력하세요..." />
               </div>
 
-              {/* Row 3: Time */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[11px] font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">상담 시작시간</label>
-                  <input type="time" value={newSession.start_time || ''} onChange={(e) => setNewSession({ ...newSession, start_time: e.target.value })} className="w-full h-10 px-3 bg-background border border-border rounded-lg outline-none focus:ring-2 focus:ring-primary/20 transition-all text-sm" />
-                </div>
-                <div>
-                  <label className="text-[11px] font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">상담 종료시간</label>
-                  <input type="time" value={newSession.end_time || ''} onChange={(e) => setNewSession({ ...newSession, end_time: e.target.value })} className="w-full h-10 px-3 bg-background border border-border rounded-lg outline-none focus:ring-2 focus:ring-primary/20 transition-all text-sm" />
-                </div>
-              </div>
-
-              {/* Row 4: Memo */}
+              {/* Row 3: Next Action */}
               <div>
-                <label className="text-[11px] font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">상담 내용 (memo)</label>
-                <textarea value={newSession.memo} onChange={(e) => setNewSession({ ...newSession, memo: e.target.value })} rows={6} className="w-full p-4 bg-background border border-border rounded-xl outline-none focus:ring-2 focus:ring-primary/20 transition-all resize-none text-sm" placeholder="상담 내용을 입력하세요..." />
-              </div>
-
-              {/* Row 5: Economic Situation */}
-              <div>
-                <label className="text-[11px] font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">경제상황 (1~5)</label>
-                <select value={newSession.economic_situation || 3} onChange={(e) => setNewSession({ ...newSession, economic_situation: Number(e.target.value) })} className="w-full h-10 px-3 bg-background border border-border rounded-lg outline-none focus:ring-2 focus:ring-primary/20 transition-all text-sm">
-                  {[1, 2, 3, 4, 5].map(v => <option key={v} value={v}>{v}점</option>)}
-                </select>
-              </div>
-
-              {/* Row 6: Social Situations */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[11px] font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">사회적 상황_가족 (1~5)</label>
-                  <select value={newSession.social_situation_family || 3} onChange={(e) => setNewSession({ ...newSession, social_situation_family: Number(e.target.value) })} className="w-full h-10 px-3 bg-background border border-border rounded-lg outline-none focus:ring-2 focus:ring-primary/20 transition-all text-sm">
-                    {[1, 2, 3, 4, 5].map(v => <option key={v} value={v}>{v}점</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[11px] font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">사회적 상황_사회 (1~5)</label>
-                  <select value={newSession.social_situation_society || 3} onChange={(e) => setNewSession({ ...newSession, social_situation_society: Number(e.target.value) })} className="w-full h-10 px-3 bg-background border border-border rounded-lg outline-none focus:ring-2 focus:ring-primary/20 transition-all text-sm">
-                    {[1, 2, 3, 4, 5].map(v => <option key={v} value={v}>{v}점</option>)}
-                  </select>
-                </div>
+                <label className="text-[11px] font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">다음 조치사항</label>
+                <textarea value={newSession.next_action} onChange={(e) => setNewSession({ ...newSession, next_action: e.target.value })} rows={3} className="w-full p-4 bg-background border border-border rounded-xl outline-none focus:ring-2 focus:ring-primary/20 transition-all resize-none text-sm" placeholder="다음 상담 시 확인할 조치사항을 입력하세요..." />
               </div>
             </div>
 
@@ -1701,6 +1387,7 @@ export default function ClientDetail() {
 
         {activeTab === 'survey' && <SurveyTab clientId={id!} />}
         {activeTab === 'summary' && <ClientSummaryAnalysisTab client={client!} />}
+        {activeTab === 'jobs' && <JobRecommendationsTab client={client!} />}
         {activeTab === 'chat' && <CounselChatTab client={client!} />}
       </div>
     </div>

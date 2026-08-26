@@ -19,6 +19,7 @@ import {
   Building2,
   UserCog,
   Bell,
+  BookOpen,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -56,6 +57,11 @@ const counselorNav: NavItem[] = [
       { label: '캘린더', path: '/dashboard/calendar', icon: <ChevronRight size={14} /> },
       { label: '메모장', path: '/dashboard/memo', icon: <ChevronRight size={14} /> },
     ],
+  },
+  {
+    label: '국취제 매뉴얼 도우미',
+    path: '/dashboard/manual',
+    icon: <BookOpen size={17} />,
   },
 ];
 
@@ -96,7 +102,15 @@ function NavGroup({ item, depth = 0 }: { item: NavItem; depth?: number }) {
   if (!hasChildren && item.path) {
     return (
       <Link href={item.path}>
-        <div className={`sidebar-item ${isActive ? 'sidebar-item-active' : ''}`} style={{ paddingLeft: `${16 + depth * 16}px` }}>
+        <div
+          className={`sidebar-item ${isActive ? 'sidebar-item-active' : ''}`}
+          style={{ paddingLeft: `${16 + depth * 16}px` }}
+          onClick={event => {
+            if (!isActive) return;
+            event.preventDefault();
+            window.location.reload();
+          }}
+        >
           <span className="flex-shrink-0 opacity-70">{item.icon}</span>
           <span>{item.label}</span>
         </div>
@@ -153,13 +167,16 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         style={{ width: sidebarOpen ? '240px' : '0px', minWidth: sidebarOpen ? '240px' : '0px' }}
       >
         {/* Logo */}
-        <div className="flex items-center justify-center px-4 py-3 border-b border-border">
+        <Link
+          href={isAdmin ? '/admin/dashboard' : '/dashboard'}
+          className="flex items-center justify-center px-4 py-3 border-b border-border cursor-pointer"
+        >
           <img
             src={ZENIEL_LOGO_SRC}
             alt="ZENIEL"
             className="h-12 object-contain"
           />
-        </div>
+        </Link>
 
         {/* Role & Affiliation badge */}
         <div className="px-4 py-3 border-b border-border bg-muted/30">

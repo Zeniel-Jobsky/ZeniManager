@@ -1,3 +1,4 @@
+import { isEmploymentCompletedStage } from '@shared/const';
 import {
   executeSupabaseRequest,
   getSupabaseClient,
@@ -25,89 +26,111 @@ function runQuery<T>(
   });
 }
 
+/**
+ * PostgREST는 .range()가 없으면 프로젝트 기본 max-rows(보통 1000)까지만 반환한다.
+ * 데이터 개수와 무관하게 전체를 가져오기 위해 페이지 단위로 끝까지 반복 조회한다.
+ */
+const FETCH_ALL_PAGE_SIZE = 1000;
+
+async function fetchAllPages<T>(
+  operationLabel: string,
+  buildQuery: (fromIndex: number, toIndex: number) => PromiseLike<{
+    data: T[] | null;
+    error: unknown;
+    status?: number | null;
+    count?: number | null;
+  }>,
+  pageSize = FETCH_ALL_PAGE_SIZE,
+): Promise<T[]> {
+  const allRows: T[] = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await runQuery<T[]>(operationLabel, buildQuery(from, from + pageSize - 1));
+    if (error) throw error;
+
+    const page = data ?? [];
+    allRows.push(...page);
+
+    if (page.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return allRows;
+}
+
 const ISO_DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+// NOTE(2026-08-26): public.clients 스키마 기준 (api.ts의 CLIENT_SELECT_FIELDS와 동일 컬럼 집합).
 const CLIENT_SELECT_FIELDS = `
-  client_id,
-  client_name,
+  id,
+  name,
   counselor_id,
   age,
-  gender_code,
-  phone_encrypted,
+  gender,
+  phone,
   education_level,
-  school_name,
+  school,
   major,
-  business_type_code,
+  business_type,
   participation_type,
   participation_stage,
-  desired_job_1,
-  desired_job_2,
-  desired_job_3,
-  hire_type,
-  hire_place,
-  hire_job_type,
-  hire_payment,
-  hire_date,
-  job_place_start,
-  job_place_end,
-  iap_to,
-  retest_stat,
-  retest_date,
-  continue_serv_1_date,
-  continue_serv_1_stat,
-  continue_serv_6_date,
-  continue_serv_6_stat,
-  continue_serv_12_date,
-  continue_serv_12_stat,
-  continue_serv_18_date,
-  continue_serv_18_stat,
-  future_card_stat,
-  memo,
-  business_code (
-    participate_type
-  ),
+  desired_job,
+  employment_type,
+  employer,
+  job_title,
+  salary,
+  employment_date,
+  iap_date,
+  rediagnosis_yn,
+  rediagnosis_date,
+  retention_1m_date,
+  retention_1m_yn,
+  retention_6m_date,
+  retention_6m_yn,
+  retention_12m_date,
+  retention_12m_yn,
+  retention_18m_date,
+  retention_18m_yn,
+  score,
+  counsel_notes,
   created_at,
-  update_at
+  updated_at
 `;
 
 type LiveClientRecord = {
-  client_id: number;
-  client_name: string;
+  id: string;
+  name: string;
   counselor_id: string | null;
   age: number | null;
-  gender_code: string | null;
-  phone_encrypted: string | null;
+  gender: '남' | '여' | null;
+  phone: string | null;
   education_level: string | null;
-  school_name: string | null;
+  school: string | null;
   major: string | null;
-  business_type_code: number | null;
+  business_type: string | null;
   participation_type: string | null;
   participation_stage: string | null;
-  desired_job_1: string | null;
-  desired_job_2: string | null;
-  desired_job_3: string | null;
-  hire_type: string | null;
-  hire_place: string | null;
-  hire_job_type: string | null;
-  hire_payment: number | null;
-  hire_date: string | null;
-  job_place_start: string | null;
-  job_place_end: string | null;
-  iap_to: string | null;
-  retest_stat: number | null;
-  retest_date: string | null;
-  continue_serv_1_date: string | null;
-  continue_serv_1_stat: number | null;
-  continue_serv_6_date: string | null;
-  continue_serv_6_stat: number | null;
-  continue_serv_12_date: string | null;
-  continue_serv_12_stat: number | null;
-  continue_serv_18_date: string | null;
-  continue_serv_18_stat: number | null;
-  future_card_stat: number | null;
-  memo: string | null;
-  business_code?: { participate_type: string | null }[] | null;
+  desired_job: string | null;
+  employment_type: string | null;
+  employer: string | null;
+  job_title: string | null;
+  salary: string | null;
+  employment_date: string | null;
+  iap_date: string | null;
+  rediagnosis_yn: string | null;
+  rediagnosis_date: string | null;
+  retention_1m_date: string | null;
+  retention_1m_yn: string | null;
+  retention_6m_date: string | null;
+  retention_6m_yn: string | null;
+  retention_12m_date: string | null;
+  retention_12m_yn: string | null;
+  retention_18m_date: string | null;
+  retention_18m_yn: string | null;
+  score: number | null;
+  counsel_notes: string | null;
   created_at: string | null;
-  update_at: string | null;
+  updated_at: string | null;
 };
 
 type LiveUserMemoRecord = {
@@ -126,18 +149,40 @@ function isMissingSchemaError(error: unknown): boolean {
   return code === 'PGRST202' || code === 'PGRST205';
 }
 
+/**
+ * 엑셀 등에서 마이그레이션된 텍스트 값에 눈에 안 보이는 앞뒤 공백이 섞여 있는 경우가 있다.
+ * `participation_stage === '취업완료'` 같은 정확 비교가 공백 때문에 조용히 어긋나는 걸 막기
+ * 위해 읽어올 때 항상 trim한다.
+ */
+function trimOrNull(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return value ?? null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function assertDashboardSupabaseConfigured(scopeLabel: string): void {
   if (!isSupabaseConfigured()) {
     throw new Error(`${scopeLabel} 기능을 사용하려면 Supabase 설정이 필요합니다.`);
   }
 }
 
-function assertDashboardRuntimeContract(scopeLabel: string, authUserId: string | null | undefined): string {
+function assertDashboardCounselorId(scopeLabel: string, counselorId: string | null | undefined): string {
+  assertDashboardSupabaseConfigured(scopeLabel);
+
+  const normalizedCounselorId = counselorId?.trim();
+  if (!normalizedCounselorId) {
+    throw new Error(`${scopeLabel} 기능을 호출하려면 public.counselors.id가 필요합니다.`);
+  }
+
+  return normalizedCounselorId;
+}
+
+function assertDashboardAuthUserId(scopeLabel: string, authUserId: string | null | undefined): string {
   assertDashboardSupabaseConfigured(scopeLabel);
 
   const normalizedAuthUserId = authUserId?.trim();
   if (!normalizedAuthUserId) {
-    throw new Error(`${scopeLabel} 기능을 호출하려면 로그인한 상담사 user_id가 필요합니다.`);
+    throw new Error(`${scopeLabel} 기능을 호출하려면 로그인한 사용자의 Auth UUID가 필요합니다.`);
   }
 
   return normalizedAuthUserId;
@@ -171,53 +216,36 @@ function liveClientToRow(row: LiveClientRecord): ClientRow {
   };
 
   const createdAt = parseSafeDate(row.created_at);
-  const updatedAt = row.update_at ? parseSafeDate(row.update_at) : createdAt;
+  const updatedAt = row.updated_at ? parseSafeDate(row.updated_at) : createdAt;
 
   return {
-    id: String(row.client_id),
-    seq_no: row.client_id ?? null,
-    year: createdAt ? new Date(createdAt).getFullYear() : null,
+    id: row.id,
+    seq_no: null,
+    year: null,
     assignment_type: null,
-    name: row.client_name,
+    name: row.name,
     resident_id_masked: null,
-    phone: row.phone_encrypted ?? null,
+    phone: row.phone ?? null,
     last_counsel_date: null,
     age: row.age ?? null,
-    gender: row.gender_code === 'M' ? '남' : row.gender_code === 'F' ? '여' : null,
-    birth_date: null,
-    email: null,
-    MBTI: null,
-    certifications: null,
-    future_card_stat: row.future_card_stat ?? null,
-    business_type: row.business_type_code != null ? String(row.business_type_code) : null,
+    gender: row.gender ?? null,
+    business_type: row.business_type ?? null,
     participation_type: row.participation_type ?? null,
-    participation_stage: row.participation_stage ?? null,
-    capa: null,
+    participation_stage: trimOrNull(row.participation_stage),
+    competency_grade: null,
     recognition_date: null,
-    desired_job: row.desired_job_1 ?? null,
-    desired_job_1: row.desired_job_1 ?? null,
-    desired_job_2: row.desired_job_2 ?? null,
-    desired_job_3: row.desired_job_3 ?? null,
-    desired_area_1: null,
-    desired_area_2: null,
-    desired_area_3: null,
-    desired_payment: null,
-    has_car: false,
-    is_working_parttime: false,
-    can_drive: null,
-    counsel_notes: null,
+    desired_job: row.desired_job ?? null,
+    counsel_notes: row.counsel_notes ?? null,
     address: null,
-    address_1: null,
-    address_2: null,
-    school_name: row.school_name ?? null,
+    school: row.school ?? null,
     major: row.major ?? null,
     education_level: row.education_level ?? null,
     initial_counsel_date: createdAt ? createdAt.split('T')[0] : null,
-    iap_date: null,
+    iap_date: row.iap_date ?? null,
     iap_duration: null,
     allowance_apply_date: null,
-    rediagnosis_date: row.retest_date ?? null,
-    rediagnosis_yn: row.retest_stat != null ? String(row.retest_stat) : null,
+    rediagnosis_date: row.rediagnosis_date ?? null,
+    rediagnosis_yn: row.rediagnosis_yn ?? null,
     work_exp_type: null,
     work_exp_intent: null,
     work_exp_company: null,
@@ -225,35 +253,33 @@ function liveClientToRow(row: LiveClientRecord): ClientRow {
     work_exp_completed: null,
     training_name: null,
     training_start: null,
-    training_end: row.job_place_end ?? null,
+    training_end: null,
     training_allowance: null,
     intensive_start: null,
     intensive_end: null,
     support_end_date: null,
-    hire_place: row.hire_place ?? null,
-    hire_job_type: row.hire_job_type ?? null,
-    hire_date: row.hire_date ?? null,
-    hire_payment: row.hire_payment ?? null,
+    employment_type: row.employment_type ?? null,
+    employment_date: row.employment_date ?? null,
+    employer: row.employer ?? null,
+    job_title: row.job_title ?? null,
+    salary: row.salary ?? null,
     employment_duration: null,
-    continue_serv_1_date: row.continue_serv_1_date ?? null,
-    continue_serv_1_stat: row.continue_serv_1_stat ?? null,
-    continue_serv_6_date: row.continue_serv_6_date ?? null,
-    continue_serv_6_stat: row.continue_serv_6_stat ?? null,
-    continue_serv_12_date: row.continue_serv_12_date ?? null,
-    continue_serv_12_stat: row.continue_serv_12_stat ?? null,
-    continue_serv_18_date: row.continue_serv_18_date ?? null,
-    continue_serv_18_stat: row.continue_serv_18_stat ?? null,
+    resignation_date: null,
+    retention_1m_date: row.retention_1m_date ?? null,
+    retention_1m_yn: row.retention_1m_yn ?? null,
+    retention_6m_date: row.retention_6m_date ?? null,
+    retention_6m_yn: row.retention_6m_yn ?? null,
+    retention_12m_date: row.retention_12m_date ?? null,
+    retention_12m_yn: row.retention_12m_yn ?? null,
+    retention_18m_date: row.retention_18m_date ?? null,
+    retention_18m_yn: row.retention_18m_yn ?? null,
     counselor_name: null,
     counselor_id: row.counselor_id ?? null,
     branch: null,
-    follow_up: false,
-    score: null,
-    iap_to: row.iap_to ?? null,
-    retest_stat: row.retest_stat ?? null,
-    memo: row.memo ?? null,
-    participate_type: Array.isArray(row.business_code) ? row.business_code[0]?.participate_type ?? null : null,
+    follow_up: null,
+    score: row.score ?? null,
     created_at: createdAt,
-    update_at: updatedAt,
+    updated_at: updatedAt,
   };
 }
 
@@ -346,10 +372,10 @@ function createDashboardMonthlyBuckets(monthCount: number): DashboardMonthlyStat
 }
 
 export async function searchDashboardClients(
-  authUserId: string,
+  counselorId: string,
   rawQuery: string,
 ): Promise<ClientRow[]> {
-  const scopedAuthUserId = assertDashboardRuntimeContract('대시보드 검색', authUserId);
+  const scopedCounselorId = assertDashboardCounselorId('대시보드 검색', counselorId);
   const normalizedQuery = rawQuery.trim();
   if (!normalizedQuery) return [];
 
@@ -360,11 +386,11 @@ export async function searchDashboardClients(
   const { data, error } = await runQuery<LiveClientRecord[]>(
     '대시보드 고객 검색',
     sb()
-      .from('client')
+      .from('clients')
       .select(CLIENT_SELECT_FIELDS)
-      .eq('counselor_id', scopedAuthUserId)
-      .or(`client_name.ilike.${likeQuery},phone_encrypted.ilike.${likeQuery},desired_job_1.ilike.${likeQuery}`)
-      .order('update_at', { ascending: false, nullsFirst: false })
+      .eq('counselor_id', scopedCounselorId)
+      .or(`name.ilike.${likeQuery},phone.ilike.${likeQuery},desired_job.ilike.${likeQuery}`)
+      .order('updated_at', { ascending: false, nullsFirst: false })
       .limit(10),
   );
 
@@ -372,38 +398,36 @@ export async function searchDashboardClients(
   return ((data ?? []) as LiveClientRecord[]).map(row => liveClientToRow(row));
 }
 
-export async function fetchDashboardStats(authUserId?: string): Promise<DashboardStats> {
-  assertDashboardSupabaseConfigured('대시보드 통계');
-  const scopedAuthUserId = authUserId?.trim() || null;
+export async function fetchDashboardStats(counselorId: string): Promise<DashboardStats> {
+  const scopedCounselorId = assertDashboardCounselorId('대시보드 통계', counselorId);
 
-  let query = sb()
-    .from('client')
-    .select('participation_stage, retest_stat, continue_serv_1_stat');
-
-  if (scopedAuthUserId) {
-    query = query.eq('counselor_id', scopedAuthUserId);
-  }
-
-  const { data, error } = await runQuery<Array<{
+  // clients.counselor_id는 auth.uid()가 아니라 public.counselors.id를 참조한다.
+  // 로그인 단계에서 확인한 내부 PK로 명시적으로 범위를 제한하고 RLS도 함께 적용한다.
+  const rawRows = await fetchAllPages<{
     participation_stage: string | null;
-    retest_stat: number | null;
-    continue_serv_1_stat: number | string | null;
-  }>>('대시보드 통계 조회', query);
-  if (error) throw error;
+    score: number | null;
+    retention_1m_yn: string | null;
+  }>('대시보드 통계 조회', (from, to) => {
+    const query = sb()
+      .from('clients')
+      .select('participation_stage, score, retention_1m_yn')
+      .eq('counselor_id', scopedCounselorId)
+      .range(from, to);
 
-  const rows = (data ?? []) as Array<{
-    participation_stage: string | null;
-    retest_stat: number | null;
-    continue_serv_1_stat: number | string | null;
-  }>;
+    return query;
+  });
+  const rows = rawRows.map(row => ({
+    ...row,
+    participation_stage: trimOrNull(row.participation_stage),
+  }));
 
   const stageCounts = new Map<string, number>();
   const scores = rows
-    .map(row => parseDashboardNumber(row.retest_stat))
+    .map(row => parseDashboardNumber(row.score))
     .filter((score): score is number => score != null);
 
   rows.forEach(row => {
-    const stage = row.participation_stage?.trim();
+    const stage = row.participation_stage;
     if (!stage) return;
     stageCounts.set(stage, (stageCounts.get(stage) ?? 0) + 1);
   });
@@ -414,10 +438,10 @@ export async function fetchDashboardStats(authUserId?: string): Promise<Dashboar
 
   return {
     totalClients: rows.length,
-    inProgress: rows.filter(row => row.participation_stage !== '취업완료').length,
-    employed: rows.filter(row => row.participation_stage === '취업완료').length,
+    inProgress: rows.filter(row => !isEmploymentCompletedStage(row.participation_stage)).length,
+    employed: rows.filter(row => isEmploymentCompletedStage(row.participation_stage)).length,
     followUpNeeded: rows.filter(
-      row => (parseDashboardNumber(row.continue_serv_1_stat) ?? 0) > 0,
+      row => isEmploymentCompletedStage(row.participation_stage) && row.retention_1m_yn === 'N',
     ).length,
     averageScore: scores.length > 0
       ? Number((scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(1))
@@ -430,42 +454,40 @@ export async function fetchDashboardStats(authUserId?: string): Promise<Dashboar
 }
 
 export async function fetchDashboardMonthlyStats(
-  authUserId: string,
+  counselorId: string,
   monthCount = 12,
 ): Promise<DashboardMonthlyStat[]> {
-  const scopedAuthUserId = assertDashboardRuntimeContract('대시보드 월간 통계', authUserId);
+  const scopedCounselorId = assertDashboardCounselorId('대시보드 월간 통계', counselorId);
   const monthKeys = buildRecentDashboardMonthKeys(monthCount);
   const [firstMonthKey, lastMonthKey] = [monthKeys[0], monthKeys[monthKeys.length - 1]];
   const rangeStart = `${firstMonthKey}-01`;
   const rangeEndDate = new Date(Number(lastMonthKey.slice(0, 4)), Number(lastMonthKey.slice(5, 7)), 0);
   const rangeEnd = `${rangeEndDate.getFullYear()}-${String(rangeEndDate.getMonth() + 1).padStart(2, '0')}-${String(rangeEndDate.getDate()).padStart(2, '0')}`;
 
-  const { data: histories, error } = await runQuery<Array<{
-    client_id: number | null;
-    counsel_date: string | null;
-  }>>(
-    '대시보드 월간 통계 조회',
+  const histories = await fetchAllPages<{
+    client_id: string | null;
+    date: string | null;
+  }>('대시보드 월간 통계 조회', (from, to) =>
     sb()
-      .from('counsel_history')
-      .select('client_id, counsel_date')
-      .eq('user_id', scopedAuthUserId)
-      .gte('counsel_date', rangeStart)
-      .lte('counsel_date', rangeEnd),
+      .from('sessions')
+      .select('client_id, date')
+      .eq('counselor_id', scopedCounselorId)
+      .gte('date', rangeStart)
+      .lte('date', rangeEnd)
+      .range(from, to),
   );
 
-  if (error) throw error;
-
   const sessionCountByMonth = new Map<string, number>();
-  const clientIdsByMonth = new Map<string, Set<number>>();
+  const clientIdsByMonth = new Map<string, Set<string>>();
 
-  (histories ?? []).forEach(row => {
-    if (!row.counsel_date) return;
-    const monthKey = row.counsel_date.slice(0, 7);
+  histories.forEach(row => {
+    if (!row.date) return;
+    const monthKey = row.date.slice(0, 7);
     if (!monthKeys.includes(monthKey)) return;
 
     sessionCountByMonth.set(monthKey, (sessionCountByMonth.get(monthKey) ?? 0) + 1);
-    if (typeof row.client_id === 'number') {
-      const clientIds = clientIdsByMonth.get(monthKey) ?? new Set<number>();
+    if (row.client_id) {
+      const clientIds = clientIdsByMonth.get(monthKey) ?? new Set<string>();
       clientIds.add(row.client_id);
       clientIdsByMonth.set(monthKey, clientIds);
     }
@@ -482,143 +504,113 @@ export async function fetchDashboardMonthlyStats(
 }
 
 export async function fetchDashboardCalendarMonthCounts(
-  authUserId: string,
+  counselorId: string,
   monthStart: string,
   monthEnd: string,
 ): Promise<Record<string, number>> {
-  const scopedAuthUserId = assertDashboardRuntimeContract('캘린더', authUserId);
+  const scopedCounselorId = assertDashboardCounselorId('캘린더', counselorId);
   assertDashboardDateRange('캘린더', monthStart, monthEnd);
 
-  const { data: histories, error } = await runQuery<Array<{
-    client_id: number | null;
-    counsel_date: string | null;
-  }>>(
-    '캘린더 월간 일정 수 조회',
+  const histories = await fetchAllPages<{
+    client_id: string | null;
+    date: string | null;
+  }>('캘린더 월간 일정 수 조회', (from, to) =>
     sb()
-      .from('counsel_history')
-      .select('client_id, counsel_date')
-      .eq('user_id', scopedAuthUserId)
-      .gte('counsel_date', monthStart)
-      .lte('counsel_date', monthEnd),
+      .from('sessions')
+      .select('client_id, date')
+      .eq('counselor_id', scopedCounselorId)
+      .gte('date', monthStart)
+      .lte('date', monthEnd)
+      .range(from, to),
   );
 
-  if (error) throw error;
-
   const clientIds = Array.from(
-    new Set((histories ?? []).map(row => row.client_id).filter((id): id is number => typeof id === 'number')),
+    new Set(histories.map(row => row.client_id).filter((id): id is string => !!id)),
   );
   if (clientIds.length === 0) return {};
 
-  const { data: clients, error: clientError } = await runQuery<Array<{
-    client_id: number;
-  }>>(
-    '캘린더 고객 소유권 검증',
+  const clients = await fetchAllPages<{ id: string }>('캘린더 고객 소유권 검증', (from, to) =>
     sb()
-      .from('client')
-      .select('client_id')
-      .eq('counselor_id', scopedAuthUserId)
-      .in('client_id', clientIds),
+      .from('clients')
+      .select('id')
+      .eq('counselor_id', scopedCounselorId)
+      .in('id', clientIds)
+      .range(from, to),
   );
 
-  if (clientError) throw clientError;
+  const allowedClientIds = new Set(clients.map(row => row.id));
 
-  const allowedClientIds = new Set((clients ?? []).map(row => row.client_id));
-
-  return (histories ?? []).reduce<Record<string, number>>((acc, row) => {
-    if (typeof row.client_id !== 'number' || !row.counsel_date || !allowedClientIds.has(row.client_id)) return acc;
-    acc[row.counsel_date] = (acc[row.counsel_date] ?? 0) + 1;
+  return histories.reduce<Record<string, number>>((acc, row) => {
+    if (!row.client_id || !row.date || !allowedClientIds.has(row.client_id)) return acc;
+    acc[row.date] = (acc[row.date] ?? 0) + 1;
     return acc;
   }, {});
 }
 
 export async function fetchDashboardCalendarEntries(
-  authUserId: string,
+  counselorId: string,
   rangeStart: string,
   rangeEnd: string,
 ): Promise<DashboardCalendarEntry[]> {
-  const scopedAuthUserId = assertDashboardRuntimeContract('캘린더', authUserId);
+  const scopedCounselorId = assertDashboardCounselorId('캘린더', counselorId);
   assertDashboardDateRange('캘린더', rangeStart, rangeEnd);
 
-  const { data: histories, error } = await runQuery<Array<{
-    counsel_id: number;
-    client_id: number | null;
-    user_id: string | null;
-    counsel_date: string | null;
-    start_time: string | null;
-    end_time: string | null;
-    session_number: number | null;
-    counselor_opinion: string | null;
-    counsel_type: string | null;
-    document_link: string | null;
-    economic_situation: number | null;
-    social_situation_family: number | null;
-    social_situation_society: number | null;
-    self_esteem: number | null;
-    self_efficacy: number | null;
-    holland_code: string | null;
-    career_fluidity: number | null;
-    info_gathering: number | null;
-    personality_test_result: string | null;
-    life_history_result: string | null;
-    profiling_grade: string | null;
-    memo: string | null;
-    create_at: string | null;
-  }>>(
-    '캘린더 일정 조회',
+  const histories = await fetchAllPages<{
+    id: string;
+    client_id: string | null;
+    counselor_id: string | null;
+    date: string | null;
+  }>('캘린더 일정 조회', (from, to) =>
     sb()
-      .from('counsel_history')
-      .select('counsel_id, client_id, user_id, counsel_date, start_time, end_time, session_number, counselor_opinion, counsel_type, document_link, economic_situation, social_situation_family, social_situation_society, self_esteem, self_efficacy, holland_code, career_fluidity, info_gathering, personality_test_result, life_history_result, profiling_grade, memo, create_at')
-      .eq('user_id', scopedAuthUserId)
-      .gte('counsel_date', rangeStart)
-      .lte('counsel_date', rangeEnd)
-      .order('counsel_date', { ascending: false })
-      .order('start_time', { ascending: false }),
+      .from('sessions')
+      .select('id, client_id, counselor_id, date')
+      .eq('counselor_id', scopedCounselorId)
+      .gte('date', rangeStart)
+      .lte('date', rangeEnd)
+      .order('date', { ascending: false })
+      .range(from, to),
   );
 
-  if (error) throw error;
-
   const clientIds = Array.from(
-    new Set((histories ?? []).map(row => row.client_id).filter((id): id is number => typeof id === 'number')),
+    new Set(histories.map(row => row.client_id).filter((id): id is string => !!id)),
   );
   if (clientIds.length === 0) return [];
 
-  const { data: clients, error: clientError } = await runQuery<Array<{
-    client_id: number;
-    client_name: string;
+  const clients = await fetchAllPages<{
+    id: string;
+    name: string;
     counselor_id: string | null;
     participation_stage: string | null;
-  }>>(
-    '캘린더 일정 고객 조회',
+  }>('캘린더 일정 고객 조회', (from, to) =>
     sb()
-      .from('client')
-      .select('client_id, client_name, counselor_id, participation_stage')
-      .eq('counselor_id', scopedAuthUserId)
-      .in('client_id', clientIds),
+      .from('clients')
+      .select('id, name, counselor_id, participation_stage')
+      .eq('counselor_id', scopedCounselorId)
+      .in('id', clientIds)
+      .range(from, to),
   );
 
-  if (clientError) throw clientError;
+  const clientMap = new Map(clients.map(client => [client.id, client]));
 
-  const clientMap = new Map((clients ?? []).map(client => [client.client_id, client]));
-
-  return (histories ?? [])
-    .map(row => {
+  return histories
+    .map((row): DashboardCalendarEntry | null => {
       const client = row.client_id != null ? clientMap.get(row.client_id) : undefined;
-      if (!client || !row.counsel_date) return null;
+      if (!client || !row.date) return null;
       return {
-        counselId: String(row.counsel_id),
-        clientId: String(client.client_id),
-        clientName: client.client_name,
-        counselDate: row.counsel_date,
-        startTime: row.start_time,
-        endTime: row.end_time,
-        participationStage: client.participation_stage,
-      } satisfies DashboardCalendarEntry;
+        counselId: row.id,
+        clientId: client.id,
+        clientName: client.name,
+        counselDate: row.date,
+        startTime: null,
+        endTime: null,
+        participationStage: trimOrNull(client.participation_stage),
+      };
     })
     .filter((row): row is DashboardCalendarEntry => row !== null);
 }
 
 export async function fetchMyMemo(authUserId: string): Promise<string | null> {
-  const scopedAuthUserId = assertDashboardRuntimeContract('개인 메모', authUserId);
+  const scopedAuthUserId = assertDashboardAuthUserId('개인 메모', authUserId);
 
   const { data, error } = await runQuery<LiveUserMemoRecord | null>(
     '개인 메모 조회',
@@ -641,7 +633,7 @@ export async function fetchMyMemo(authUserId: string): Promise<string | null> {
 
 export async function updateMyMemo(authUserId: string, memo: string | null): Promise<string | null> {
   const normalizedMemo = normalizeMemoValue(memo);
-  const scopedAuthUserId = assertDashboardRuntimeContract('개인 메모', authUserId);
+  const scopedAuthUserId = assertDashboardAuthUserId('개인 메모', authUserId);
 
   const { error, count } = await runQuery<null>(
     '개인 메모 저장',
